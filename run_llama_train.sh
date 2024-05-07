@@ -16,7 +16,7 @@ TRAINER_DIR=${1:-/home/$USER/local/torchtitan}
 # e.g.
 # LOG_RANK=0,1 NGPU=4 ./run_llama_train.sh
 
-NGPU=${NGPU:-"8"}
+NGPU=${NGPU:-"1"}
 
 # by default log just rank 0 output,
 LOG_RANK=${LOG_RANK:-0}
@@ -28,7 +28,7 @@ overrides=""
 if [ $# -ne 0 ]; then
     overrides="$*"
 fi
-
+CUDA_LAUNCH_BLOCKING=1
 torchrun --nproc_per_node=${NGPU} --rdzv_backend c10d --rdzv_endpoint="localhost:0" \
 --local-ranks-filter ${LOG_RANK} --role rank --tee 3 \
 train.py --job.config_file ${CONFIG_FILE} $overrides
