@@ -22,7 +22,7 @@ NGPU=${NGPU:-"8"}
 LOG_RANK=${LOG_RANK:-0}
 
 
-CONFIG_FILE=${CONFIG_FILE:-"./train_configs/llama3_8b.toml"}
+CONFIG_FILE=${CONFIG_FILE:-"./train_configs/debug_model.toml"}
 
 overrides=""
 if [ $# -ne 0 ]; then
