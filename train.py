@@ -272,7 +272,9 @@ def main(job_config: JobConfig):
 
     data_iterator = iter(data_loader)
 
+
     logger.info(f"Training starts at step {train_state.step + 1}")
+    #import actnn.cpp_extension.quantization as ext_quantization
     with torch.autograd.graph.save_on_cpu():
     #with contextlib.nullcontext():
         with maybe_enable_profiling(

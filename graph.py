@@ -357,6 +357,7 @@ def perf_timer(func):
 
 import time
 import secrets
+import actnn.cpp_extension.quantization as ext_quantization
 
 _gb = 1024 * 1024 * 1024
 def get_tensor_id()-> str:
@@ -449,6 +450,8 @@ class save_on_cpu(saved_tensors_hooks):
             nonlocal torch_null_stream
             nonlocal forward_start_time
             nonlocal backward_start_time
+
+            print(f"***** packing {input_tensor.shape=}, {input_tensor.dtype=}")
 
             if is_first_forward:
                 #if backward_start_time != 0:
