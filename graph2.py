@@ -389,7 +389,7 @@ class save_on_cpu(saved_tensors_hooks):
         torch_null_stream = torch.cuda.current_stream()
         max_num_inflight_tensors = 0
         min_copy_size = 256
-        self.blocksize = 64
+        self.blocksize = 256
 
         is_first_forward = True
         is_first_backward = True
@@ -401,7 +401,7 @@ class save_on_cpu(saved_tensors_hooks):
         backward_start_time = 0
 
         self.ignore_types = [torch.complex64, torch.int64]
-        e_bits = 3
+        e_bits = 4
         p_bits = 7 - e_bits
         self.code = F.create_fp8_map(True, e_bits, p_bits).cuda()
         #print(f"code = {self.code}")
@@ -493,6 +493,7 @@ class save_on_cpu(saved_tensors_hooks):
                 cpu_tensor.copy_(input_tensor, non_blocking=False)
             '''
             # compress tensor
+            #compressed_tensor, stats_compression = F.quantize_4bit(input_tensor, quant_type="nf4")
             compressed_tensor, stats_compression = F.quantize_blockwise(input_tensor, blocksize=self.blocksize, code=self.code)
 
             fast_lookup[tensor_id] = (compressed_tensor, stats_compression)
@@ -521,6 +522,7 @@ class save_on_cpu(saved_tensors_hooks):
                 #end_forward_time = time.perf_counter()
                 #print(f"***** forward took {(end_forward_time - forward_start_time):.3f} seconds")
                 print(f"***** first backward, managing {len(fast_lookup)} tensors")
+
                 #backward_start_time = time.perf_counter()
                 is_first_backward = False
                 is_first_forward = True
@@ -532,6 +534,7 @@ class save_on_cpu(saved_tensors_hooks):
                 return maybe_compressed_tensor
 
             #print(f"{compress_stats=}")
+            #lookup_tensor = F.dequantize_4bit(maybe_compressed_tensor, compress_stats, quant_type="nf4")
             lookup_tensor = F.dequantize_blockwise(maybe_compressed_tensor, compress_stats, blocksize=self.blocksize, code=self.code)
             #print(f"unpacked {lookup_tensor.shape=}")
             return lookup_tensor

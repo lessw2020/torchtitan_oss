@@ -30,6 +30,9 @@ llama2_configs = {
 
 llama3_configs = {
     "debugmodel": ModelArgs(dim=256, n_layers=2, n_heads=16, rope_theta=500000),
+    "1B": ModelArgs(dim=2048, n_layers=18, n_heads=16,rope_theta=500000),
+    "2B": ModelArgs(dim=2048, n_layers=36, n_heads=16,rope_theta=500000),
+
     "8B": ModelArgs(
         dim=4096,
         n_layers=32,

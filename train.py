@@ -309,6 +309,8 @@ def main(job_config: JobConfig):
                 # forward / backward
                 with loss_parallel_ctx():
                     pred = model(input_ids)
+                    fwd_mem = torch.cuda.memory_allocated('cuda')
+                    logger.info(f"Forward memory: {round((fwd_mem/1e9),4)}")
                     loss = loss_fn(pred, labels)
                     loss.backward()
 
