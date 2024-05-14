@@ -19,7 +19,7 @@ save_tb_folder = "tb"
 
 [model]
 name = "llama3"
-flavor = "2B"
+flavor = "1B"
 norm_type = "fused_rmsnorm"  # layernorm / np_layernorm / rmsnorm / fused_rmsnorm
 # test tokenizer.model, for debug purpose only
 tokenizer_path = "./test/assets/test_tiktoken.model"
@@ -29,7 +29,7 @@ name = "AdamW"
 lr = 8e-4
 
 [training]
-batch_size = 10
+batch_size = 16
 seq_len = 2048
 warmup_steps = 10  # lr scheduler warm up, normally 20% of the train steps
 max_norm = 1.0  # grad norm clipping

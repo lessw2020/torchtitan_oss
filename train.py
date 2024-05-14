@@ -274,7 +274,7 @@ def main(job_config: JobConfig):
 
 
     logger.info(f"Training starts at step {train_state.step + 1}")
-    #import actnn.cpp_extension.quantization as ext_quantization
+    import actnn.cpp_extension.quantization as ext_quantization
     with torch.autograd.graph.save_on_cpu():
     #with contextlib.nullcontext():
         with maybe_enable_profiling(
@@ -292,6 +292,8 @@ def main(job_config: JobConfig):
             while train_state.step < job_config.training.steps:
                 train_state.step += 1
                 if train_state.step > 1 and train_state.step % _gc_freq == 0:
+                    gc.collect(1)
+                if train_state.step ==2:
                     gc.collect(1)
 
                 # get batch
