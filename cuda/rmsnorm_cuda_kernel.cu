@@ -9,7 +9,7 @@
 #include "type_bridge.h"
 #include "static_switch.h"
 
-
+/*
 template<typename U>
 __device__ void cuWelfordOnlineSum(const U curr, U& mu, U& sigma2, U& count) {
     ++count;
@@ -75,6 +75,68 @@ __device__ void cuWelfordSigma2(const T* __restrict__ vals, const int n1, const 
                 }
             }
             sigma2 += tmp;
+        }
+
+        // intra-warp reductions
+        for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+            sigma2 += __shfl_down_sync(0xffffffff, sigma2, offset);
+        }
+
+        // inter-warp reductions
+        if (blockDim.y > 1) {
+            U* ubuf = (U*)buf;
+            if (threadIdx.x == 0) {
+                ubuf[threadIdx.y] = sigma2;
+            }
+            __syncthreads();
+
+            if (threadIdx.y == 0) {
+                U tmp = U(0);
+                for (int i = 0; i < blockDim.y; ++i) {
+                    tmp += ubuf[i];
+                }
+                sigma2 = tmp;
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            buf[0] = sigma2;
+        }
+        __syncthreads();
+
+        sigma2 = buf[0] / U(n2);
+    }
+}
+*/
+
+template<typename U>
+__device__ void cuRMSOnlineSum(const U curr, U& sigma2) {
+    sigma2 += curr * curr;
+}
+
+template<typename U>
+__device__ void cuChanRMSOnlineSum(const U sigma2B, U& sigma2) {
+    sigma2 += sigma2B;
+}
+
+template<typename T, typename U>
+__device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int n2, const int i1, U& sigma2, U* buf) {
+    // Assumptions:
+    // 1) blockDim.x == warpSize
+    // 2) Tensor is contiguous
+    // 3) blockDim.y*sizeof(U) shared memory available.
+    //
+    // compute sum of squares over n2
+    sigma2 = U(0);
+    if (i1 < n1) {
+        const int numx = blockDim.x * blockDim.y;
+        const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+        const T* lvals = vals + i1 * n2;
+
+        for (int l = thrx; l < n2; l += numx) {
+            const U curr = static_cast<U>(lvals[l]);
+            cuRMSOnlineSum(curr, sigma2);
         }
 
         // intra-warp reductions
@@ -178,7 +240,7 @@ void cuApplyRMSNorm(
     SharedMemory<U> shared;
     U* buf = shared.getPointer();
     U mu,sigma2;
-    cuWelfordSigma2(vals,n1,n2,i1,sigma2,buf);
+    cuRMSSigma2(vals,n1,n2,i1,sigma2,buf);
 
     const T* lvals = vals + i1*n2;
     V* ovals = output_vals + i1*n2;
