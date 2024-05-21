@@ -61,11 +61,11 @@ __device__ void cuWelfordSigma2(const T* __restrict__ vals, const int n1, const 
         // one warp normalizes one n1 index,
         // synchronization is implicit
         const int numx = blockDim.x * blockDim.y;
-        const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
         const T* lvals = vals + i1 * n2;
 
         // unrolled loop
-        for (int l = thrx * 4; l < n2; l += 4 * numx) {
+        for (int l = tx * 4; l < n2; l += 4 * numx) {
             U tmp = U(0);
             #pragma unroll
             for (int k = 0; k < 4; ++k) {
@@ -131,10 +131,10 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
     sigma2 = U(0);
     if (i1 < n1) {
         const int numx = blockDim.x * blockDim.y;
-        const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
         const T* lvals = vals + i1 * n2;
 
-        for (int l = thrx; l < n2; l += numx) {
+        for (int l = tx; l < n2; l += numx) {
             const U curr = static_cast<U>(lvals[l]);
             cuRMSOnlineSum(curr, sigma2);
         }
@@ -193,11 +193,11 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
     sigma2 = U(0);
     if (i1 < n1) {
         const int numx = blockDim.x * blockDim.y;
-        const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
         const T* lvals = vals + i1 * n2;
 
         // Unrolled loop with 4 elements per iteration
-        for (int l = 4 * thrx; l < n2; l += 4 * numx) {
+        for (int l = 4 * tx; l < n2; l += 4 * numx) {
             U tmp = U(0);
             #pragma unroll
             for (int k = 0; k < 4; ++k) {
@@ -243,7 +243,67 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
     }
 }
 */
+template<typename T>
+__device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int n2, const int i1, float& sigma2, float* buf) {
+    // Assumptions:
+    // 1) blockDim.x == warpSize
+    // 2) Tensor is contiguous
+    // 3) blockDim.y*sizeof(float) shared memory available.
+    //
+    // compute sum of squares over n2
+    sigma2 = 0.0f;
+    if (i1 < n1) {
+        const int num_x = blockDim.x * blockDim.y;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
+        const float4* lvals = reinterpret_cast<const float4*>(vals + i1 * n2);
 
+        // Unrolled loop with float4 elements
+        for (int l = tx; l < n2 / 4; l += num_x) {
+            const float4 curr = __ldg(&lvals[l]);
+            sigma2 += curr.x * curr.x + curr.y * curr.y + curr.z * curr.z + curr.w * curr.w;
+        }
+
+        // Handle residual elements
+        int remaining = n2 % 4;
+        if (remaining > 0 && tx < remaining) {
+            const float* residual = reinterpret_cast<const float*>(&lvals[n2 / 4]);
+            const float curr = residual[tx];
+            sigma2 += curr * curr;
+        }
+
+        // Intra-warp reductions using WARP_SHFL_XOR
+        #pragma unroll
+        for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+            sigma2 += WARP_SHFL_XOR(sigma2, offset);
+        }
+
+        // Inter-warp reductions using shared memory
+        if (blockDim.y > 1) {
+            float* ubuf = buf;
+            if (threadIdx.x == 0) {
+                ubuf[threadIdx.y] = sigma2;
+            }
+            __syncthreads();
+
+            if (threadIdx.y == 0) {
+                sigma2 = 0.0f;
+                #pragma unroll
+                for (int i = 0; i < blockDim.y; ++i) {
+                    sigma2 += ubuf[i];
+                }
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            buf[0] = sigma2;
+        }
+        __syncthreads();
+
+        sigma2 = buf[0] / static_cast<float>(n2);
+    }
+}
+/*
 template<typename T, typename U>
 __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int n2, const int i1, U& sigma2, U* buf) {
     // Assumptions:
@@ -254,12 +314,12 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
     // compute sum of squares over n2
     sigma2 = U(0);
     if (i1 < n1) {
-        const int numx = blockDim.x * blockDim.y;
-        const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+        const int num_x = blockDim.x * blockDim.y;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
         const T* lvals = vals + i1 * n2;
 
         // Unrolled loop with 4 elements per iteration
-        for (int l = 4 * thrx; l < n2; l += 4 * numx) {
+        for (int l = 4 * tx; l < n2; l += 4 * num_x) {
             U tmp = U(0);
             #pragma unroll
             for (int k = 0; k < 4; ++k) {
@@ -303,6 +363,7 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
         sigma2 = buf[0] / U(n2);
     }
 }
+*/
 template<typename U> U rsqrt(U v) {
   return U(1) / sqrt(v);
 }
@@ -352,7 +413,7 @@ struct SharedMemory <double>
 };
 } // end namespace
 
-
+/*
 template<typename T, typename U, typename V=T> __global__
 void cuApplyRMSNorm(
   V* __restrict__ output_vals,
@@ -378,23 +439,62 @@ void cuApplyRMSNorm(
     V* ovals = output_vals + i1*n2;
     U c_invvar = rsqrt(sigma2 + epsilon);
     const int numx = blockDim.x * blockDim.y;
-    const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+    const int tx = threadIdx.x + threadIdx.y * blockDim.x;
     //if (gamma != nullptr) {
-    for (int i = thrx;  i < n2;  i+=numx) {
+    for (int i = tx;  i < n2;  i+=numx) {
         U curr = static_cast<U>(lvals[i]);
         ovals[i] = gamma[i] * static_cast<V>(c_invvar * curr);
       }
     /*} else {
-      for (int i = thrx;  i < n2;  i+=numx) {
+      for (int i = tx;  i < n2;  i+=numx) {
         U curr = static_cast<U>(lvals[i]);
         ovals[i] = static_cast<V>(c_invvar * curr);
-      }*/
+      }
     //}
     if (threadIdx.x == 0 && threadIdx.y == 0) {
       invvar[i1] = c_invvar;
     }
     __syncthreads();
   }
+}
+*/
+template<typename T, typename V = T>
+__global__ void cuApplyRMSNorm(
+    V* __restrict__ output_vals,
+    float* __restrict__ invvar,
+    const T* __restrict__ vals,
+    const int n1,
+    const int n2,
+    const float epsilon,
+    const V* __restrict__ gamma)
+{
+    // Assumptions:
+    // 1) blockDim.x == warpSize
+    // 2) Tensors are contiguous
+    //
+    for (auto i1 = blockIdx.y; i1 < n1; i1 += gridDim.y) {
+        __shared__ float buf[1];
+        float sigma2;
+
+        cuRMSSigma2(vals, n1, n2, i1, sigma2, buf);
+
+        const T* lvals = vals + i1 * n2;
+        V* ovals = output_vals + i1 * n2;
+        float c_invvar = rsqrtf(sigma2 + epsilon);
+
+        const int numx = blockDim.x * blockDim.y;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
+
+        for (int i = tx; i < n2; i += numx) {
+            float curr = static_cast<float>(lvals[i]);
+            ovals[i] = gamma[i] * static_cast<V>(c_invvar * curr);
+        }
+
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            invvar[i1] = c_invvar;
+        }
+        __syncthreads();
+    }
 }
 
 
@@ -508,7 +608,7 @@ __device__ __forceinline__ void cuLoadAddStridedInputs(
     }
 }
 
-
+/*
 template<typename T, typename U, typename V=T>
 void HostApplyRMSNorm(
     V* output,
@@ -530,8 +630,34 @@ void HostApplyRMSNorm(
     cuApplyRMSNorm<<<blocks, threads, nshared, stream>>>(
       output, invvar, input, n1, n2, U(epsilon), gamma);
 }
+*/
 
+template<typename T, typename V = T>
+void HostApplyRMSNorm(
+    V* output,
+    float* invvar,
+    const T* input,
+    int n1,
+    int n2,
+    double epsilon,
+    const V* gamma)
+{
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    const dim3 threads(32, 4, 1);
+    const uint64_t maxGridY = at::cuda::getCurrentDeviceProperties()->maxGridSize[1];
+    const dim3 blocks(1, std::min((uint64_t)n1, maxGridY), 1);
 
+    cuApplyRMSNorm<<<blocks, threads, 0, stream>>>(
+        output,
+        invvar,
+        input,
+        n1,
+        n2,
+        static_cast<float>(epsilon),
+        gamma);
+}
+
+/*
 void cuda_rms_norm(
     at::Tensor* output,
     at::Tensor* invvar,
@@ -554,6 +680,31 @@ void cuda_rms_norm(
           epsilon,
           gamma != nullptr ? gamma->DATA_PTR<scalar_t_out>() : nullptr);
       )
+}
+*/
+
+void cuda_rms_norm(
+    at::Tensor* output,
+    at::Tensor* invvar,
+    at::Tensor* input,
+    int n1,
+    int n2,
+    at::IntArrayRef normalized_shape,
+    at::Tensor* gamma,
+    double epsilon)
+{
+    using namespace at;
+    DISPATCH_FLOAT_HALF_AND_BFLOAT_INOUT_TYPES(
+        input->scalar_type(), output->scalar_type(),
+        "rms_norm_cuda_kernel",
+        HostApplyRMSNorm<scalar_t_in, scalar_t_out>(
+            output->DATA_PTR<scalar_t_out>(),
+            invvar->DATA_PTR<float>(),
+            input->DATA_PTR<scalar_t_in>(),
+            n1, n2,
+            epsilon,
+            gamma != nullptr ? gamma->DATA_PTR<scalar_t_out>() : nullptr);
+    )
 }
 
 // ---- backwards related -------
@@ -703,9 +854,9 @@ void cuComputeGradInput(
     const U c_invvar = invvar[i1];
     //const U c_mean = !MemoryEfficient ? mean[i1] : 0.;
     const int numx = blockDim.x * blockDim.y;
-    const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+    const int tx = threadIdx.x + threadIdx.y * blockDim.x;
     if (gamma != nullptr) {
-      int l = 4*thrx;
+      int l = 4*tx;
       for (;  l+3 < n2;  l+=4*numx) {
         for (int k = 0;  k < 4;  ++k) {
           const U c_h = static_cast<U>(k_h[l+k]);
@@ -731,7 +882,7 @@ void cuComputeGradInput(
 
       }
     } else {
-      int l = 4*thrx;
+      int l = 4*tx;
       for (;  l+3 < n2;  l+=4*numx) {
         for (int k = 0;  k < 4;  ++k) {
           const U c_h = static_cast<U>(k_h[l+k]);
@@ -794,7 +945,7 @@ void cuComputeGradInput(
     U term1 = (U(1) / fH) * c_invvar;
     T* k_grad_input = grad_input + i1*n2;
     if (gamma != nullptr) {
-      for (int l = thrx;  l < n2;  l+=numx) {
+      for (int l = tx;  l < n2;  l+=numx) {
         const U c_h = static_cast<U>(k_h[l]);
         const U c_loss = static_cast<U>(k_dout[l]);
         const U k_gamma = static_cast<U>(clamp_by_magnitude(gamma[l], eps));
@@ -840,10 +991,10 @@ __global__ void cuComputeGradInput(
         const U c_invvar = invvar[i1];
         const U c_mean = !MemoryEfficient ? mean[i1] : U(0);
         const int numx = blockDim.x * blockDim.y;
-        const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
 
         if (gamma != nullptr) {
-            int l = 4 * thrx;
+            int l = 4 * tx;
             for (; l + 3 < n2; l += 4 * numx) {
                 for (int k = 0; k < 4; ++k) {
                     const U c_h = static_cast<U>(k_h[l + k]);
@@ -867,7 +1018,7 @@ __global__ void cuComputeGradInput(
                 }
             }
         } else {
-            int l = 4 * thrx;
+            int l = 4 * tx;
             for (; l + 3 < n2; l += 4 * numx) {
                 for (int k = 0; k < 4; ++k) {
                     const U c_h = static_cast<U>(k_h[l + k]);
@@ -931,7 +1082,7 @@ __global__ void cuComputeGradInput(
         T* k_grad_input = grad_input + i1 * n2;
 
         if (gamma != nullptr) {
-            for (int l = thrx; l < n2; l += numx) {
+            for (int l = tx; l < n2; l += numx) {
                 const U c_h = static_cast<U>(k_h[l]);
                 const U c_loss = static_cast<U>(k_dout[l]);
                 const U k_gamma = static_cast<U>(clamp_by_magnitude(gamma[l], eps));
