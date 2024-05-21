@@ -170,7 +170,7 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
         sigma2 = buf[0] / U(n2);
     }
 }
-*/
+
 
 template<typename U>
 __device__ void cuRMSOnlineSum(const U curr, U& sigma2) {
@@ -230,6 +230,67 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
                     tmp += ubuf[i];
                 }
                 sigma2 = tmp;
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            buf[0] = sigma2;
+        }
+        __syncthreads();
+
+        sigma2 = buf[0] / U(n2);
+    }
+}
+*/
+
+template<typename T, typename U>
+__device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int n2, const int i1, U& sigma2, U* buf) {
+    // Assumptions:
+    // 1) blockDim.x == warpSize
+    // 2) Tensor is contiguous
+    // 3) blockDim.y*sizeof(U) shared memory available.
+    //
+    // compute sum of squares over n2
+    sigma2 = U(0);
+    if (i1 < n1) {
+        const int numx = blockDim.x * blockDim.y;
+        const int thrx = threadIdx.x + threadIdx.y * blockDim.x;
+        const T* lvals = vals + i1 * n2;
+
+        // Unrolled loop with 4 elements per iteration
+        for (int l = 4 * thrx; l < n2; l += 4 * numx) {
+            U tmp = U(0);
+            #pragma unroll
+            for (int k = 0; k < 4; ++k) {
+                if (l + k < n2) {
+                    const U curr = static_cast<U>(__ldg(&lvals[l + k]));
+                    tmp += curr * curr;
+                }
+            }
+            sigma2 += tmp;
+        }
+
+        // Intra-warp reductions using WARP_SHFL_XOR
+        #pragma unroll
+        for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+            sigma2 += WARP_SHFL_XOR(sigma2, offset);
+        }
+
+        // Inter-warp reductions using shared memory
+        if (blockDim.y > 1) {
+            U* ubuf = (U*)buf;
+            if (threadIdx.x == 0) {
+                ubuf[threadIdx.y] = sigma2;
+            }
+            __syncthreads();
+
+            if (threadIdx.y == 0) {
+                sigma2 = U(0);
+                #pragma unroll
+                for (int i = 0; i < blockDim.y; ++i) {
+                    sigma2 += ubuf[i];
+                }
             }
             __syncthreads();
         }
