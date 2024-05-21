@@ -508,6 +508,55 @@ __device__ __forceinline__ void cuLoadAddStridedInputs(
     }
 }
 
+
+template<typename T, typename U, typename V=T>
+void HostApplyRMSNorm(
+    V* output,
+    U* invvar,
+    const T* input,
+    int n1,
+    int n2,
+    double epsilon,
+    const V* gamma)
+{
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    const dim3 threads(32,4,1);
+    const uint64_t maxGridY = at::cuda::getCurrentDeviceProperties()->maxGridSize[1];
+    const dim3 blocks(1, std::min((uint64_t)n1, maxGridY), 1);
+    int nshared =
+        threads.y > 1 ?
+            threads.y*sizeof(U)+(threads.y/2)*sizeof(U) :
+            0;
+    cuApplyRMSNorm<<<blocks, threads, nshared, stream>>>(
+      output, invvar, input, n1, n2, U(epsilon), gamma);
+}
+
+
+void cuda_rms_norm(
+    at::Tensor* output,
+    at::Tensor* invvar,
+    at::Tensor* input,
+    int n1,
+    int n2,
+    at::IntArrayRef normalized_shape,
+    at::Tensor* gamma,
+    double epsilon)
+{
+    using namespace at;
+    DISPATCH_DOUBLE_FLOAT_HALF_AND_BFLOAT_INOUT_TYPES(
+        input->scalar_type(), output->scalar_type(), "rms_norm_cuda_kernel",
+        using accscalar_t = at::acc_type<scalar_t_in, true>;
+        HostApplyRMSNorm<scalar_t_in, accscalar_t, scalar_t_out>(
+          output->DATA_PTR<scalar_t_out>(),
+          invvar->DATA_PTR<accscalar_t>(),
+          input->DATA_PTR<scalar_t_in>(),
+          n1,n2,
+          epsilon,
+          gamma != nullptr ? gamma->DATA_PTR<scalar_t_out>() : nullptr);
+      )
+}
+
+// ---- backwards related -------
 template<typename T, typename U, typename V, bool MemoryEfficient>
 __global__ void cuComputePartGradGammaBeta(
     const V* __restrict__ dout,
@@ -901,53 +950,6 @@ __global__ void cuComputeGradInput(
     }
 }
 */
-
-template<typename T, typename U, typename V=T>
-void HostApplyRMSNorm(
-    V* output,
-    U* invvar,
-    const T* input,
-    int n1,
-    int n2,
-    double epsilon,
-    const V* gamma)
-{
-    auto stream = at::cuda::getCurrentCUDAStream().stream();
-    const dim3 threads(32,4,1);
-    const uint64_t maxGridY = at::cuda::getCurrentDeviceProperties()->maxGridSize[1];
-    const dim3 blocks(1, std::min((uint64_t)n1, maxGridY), 1);
-    int nshared =
-        threads.y > 1 ?
-            threads.y*sizeof(U)+(threads.y/2)*sizeof(U) :
-            0;
-    cuApplyRMSNorm<<<blocks, threads, nshared, stream>>>(
-      output, invvar, input, n1, n2, U(epsilon), gamma);
-}
-
-
-void cuda_rms_norm(
-    at::Tensor* output,
-    at::Tensor* invvar,
-    at::Tensor* input,
-    int n1,
-    int n2,
-    at::IntArrayRef normalized_shape,
-    at::Tensor* gamma,
-    double epsilon)
-{
-    using namespace at;
-    DISPATCH_DOUBLE_FLOAT_HALF_AND_BFLOAT_INOUT_TYPES(
-        input->scalar_type(), output->scalar_type(), "rms_norm_cuda_kernel",
-        using accscalar_t = at::acc_type<scalar_t_in, true>;
-        HostApplyRMSNorm<scalar_t_in, accscalar_t, scalar_t_out>(
-          output->DATA_PTR<scalar_t_out>(),
-          invvar->DATA_PTR<accscalar_t>(),
-          input->DATA_PTR<scalar_t_in>(),
-          n1,n2,
-          epsilon,
-          gamma != nullptr ? gamma->DATA_PTR<scalar_t_out>() : nullptr);
-      )
-}
 
 template<typename T, typename U=float, typename V=T>
 void HostRMSNormGradient(
