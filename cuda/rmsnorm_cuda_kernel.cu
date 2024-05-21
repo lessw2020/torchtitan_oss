@@ -6,7 +6,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#include "type_shim.h"
+#include "type_bridge.h"
 #include "static_switch.h"
 
 

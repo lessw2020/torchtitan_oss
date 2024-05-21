@@ -10,10 +10,10 @@ import torch.nn as nn
 from torch import Tensor
 
 #sys.path.append("..")
-from .fused_rms_norm import FusedRMSNorm
+from fused_rms_norm import FusedRMSNorm
 #from .nv_apex import FusedRMSNorm as nv_apex_FusedRMSNorm
 
-from .testing_utils import assert_expected, gpu_test, set_rng_seed
+from testing_utils import assert_expected, gpu_test, set_rng_seed
 
 
 @pytest.fixture(autouse=True)

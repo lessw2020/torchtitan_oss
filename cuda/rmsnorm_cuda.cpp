@@ -2,7 +2,7 @@
 #include <vector>
 #include <cassert>
 #include <iostream>
-#include "utils.h"
+#include "compat.h"
 
 
 
@@ -26,11 +26,8 @@ void compute_n1_n2(
 }
 
 void check_args(
-    #ifdef VERSION_GE_1_1
+
     at::IntArrayRef normalized_shape,
-    #else
-    at::IntList normalized_shape,
-    #endif
     at::Tensor gamma,
     at::Tensor beta
     )
@@ -40,11 +37,7 @@ void check_args(
 }
 
 void check_args(
-    #ifdef VERSION_GE_1_1
     at::IntArrayRef normalized_shape,
-    #else
-    at::IntList normalized_shape,
-    #endif
     at::Tensor gamma
     )
 {
@@ -54,11 +47,7 @@ void check_args(
 
 void check_args(
     at::Tensor input,
-    #ifdef VERSION_GE_1_1
     at::IntArrayRef normalized_shape,
-    #else
-    at::IntList normalized_shape,
-    #endif
     int& n1,
     int& n2
     )
@@ -93,11 +82,7 @@ void check_args(
 
 void check_args(
     at::Tensor input,
-    #ifdef VERSION_GE_1_1
     at::IntArrayRef normalized_shape,
-    #else
-    at::IntList normalized_shape,
-    #endif
     at::Tensor gamma,
     at::Tensor beta,
     int& n1,
@@ -110,11 +95,7 @@ void check_args(
 
 void check_args(
     at::Tensor input,
-    #ifdef VERSION_GE_1_1
     at::IntArrayRef normalized_shape,
-    #else
-    at::IntList normalized_shape,
-    #endif
     at::Tensor gamma,
     int& n1,
     int& n2
