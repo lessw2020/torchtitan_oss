@@ -12,3 +12,6 @@ out
 wandb
 
 torchtitan/datasets/**/*.model
+*.ncu-rep
+*.so
+cuda/dist/*
