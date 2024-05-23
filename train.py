@@ -50,7 +50,7 @@ from torchtitan.utils import (
     NoColor,
     set_pg_timeouts,
 )
-
+from torchtitan.models.fadam import FAdam
 
 @dataclass
 class TrainState(Stateful):
@@ -102,6 +102,9 @@ def build_optimizer(model, job_config: JobConfig):
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1, foreach=True
         )
+    elif name == "FAdam":
+        optimizer = FAdam(model.parameters(), lr=lr)
+        logger.info(f"Using FAdam Optimizer")
     else:
         raise NotImplementedError(f"Optimizer {name} not added.")
 

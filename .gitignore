@@ -12,3 +12,5 @@ out
 wandb
 
 torchtitan/datasets/**/*.model
+*.log
+error.json
