@@ -561,8 +561,7 @@ void cuComputeGradInput(
     bool rms_only)
 {
   for (auto i1=blockIdx.y; i1 < n1; i1 += gridDim.y) {
-    //U sum_loss1 = U(0);
-    U sum_loss2 = U(0);
+    U sum_loss1 = U(0);
     const T* k_h = input_or_output + i1*n2;
     const V* k_dout = dout + i1*n2;
     const U c_invvar = invvar[i1];
@@ -577,9 +576,9 @@ void cuComputeGradInput(
           const U c_loss = static_cast<U>(k_dout[l+k]);
 
             if (MemoryEfficient) {
-              sum_loss2 += c_loss * c_h;
+              sum_loss1 += c_loss * c_h;
             } else {
-              sum_loss2 += c_loss * gamma[l+k] * (c_h) * c_invvar;
+              sum_loss1 += c_loss * gamma[l+k] * (c_h) * c_invvar;
             }
 
         }
@@ -589,9 +588,9 @@ void cuComputeGradInput(
         const U c_loss = static_cast<U>(k_dout[l]);
 
           if (MemoryEfficient) {
-            sum_loss2 += c_loss * c_h;
+            sum_loss1 += c_loss * c_h;
           } else {
-            sum_loss2 += c_loss * gamma[l] * (c_h) * c_invvar;
+            sum_loss1 += c_loss * gamma[l] * (c_h) * c_invvar;
           }
 
       }
@@ -603,9 +602,9 @@ void cuComputeGradInput(
           const U c_loss = static_cast<U>(k_dout[l+k]);
 
             if (MemoryEfficient) {
-              sum_loss2 += c_loss * c_h;
+              sum_loss1 += c_loss * c_h;
             } else {
-              sum_loss2 += c_loss * (c_h) * c_invvar;
+              sum_loss1 += c_loss * (c_h) * c_invvar;
             }
 
         }
@@ -615,18 +614,18 @@ void cuComputeGradInput(
         const U c_loss = static_cast<U>(k_dout[l]);
 
         if (MemoryEfficient) {
-            sum_loss2 += c_loss * c_h;
+            sum_loss1 += c_loss * c_h;
           } else {
-            sum_loss2 += c_loss * (c_h) * c_invvar;
+            sum_loss1 += c_loss * (c_h) * c_invvar;
           }
 
       }
     }
     // intra-warp reductions
     for (int mask = blockDim.x/2;  mask > 0;  mask /= 2) {
-      sum_loss2 += WARP_SHFL_XOR(sum_loss2, mask);
+      sum_loss1 += WARP_SHFL_XOR(sum_loss1, mask);
     //for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-    //  sum_loss2 += __shfl_down_sync(0xFFFFFFFF, sum_loss2, offset);
+    //  sum_loss1 += __shfl_down_sync(0xFFFFFFFF, sum_loss1, offset);
     }
     // inter-warp reductions
     if (blockDim.y > 1) {
@@ -636,22 +635,22 @@ void cuComputeGradInput(
         // upper half of warps write to shared
         if (threadIdx.y >= offset && threadIdx.y < 2*offset) {
           const int wrt_i = (threadIdx.y - offset) * blockDim.x + threadIdx.x;
-          buf[2*wrt_i+1] = sum_loss2;
+          buf[2*wrt_i+1] = sum_loss1;
         }
         __syncthreads();
         // lower half merges
         if (threadIdx.y < offset) {
           const int read_i = threadIdx.y * blockDim.x + threadIdx.x;
-          sum_loss2 += buf[2*read_i+1];
+          sum_loss1 += buf[2*read_i+1];
         }
         __syncthreads();
       }
       if (threadIdx.y == 0) {
-        buf[2*threadIdx.x+1] = sum_loss2;
+        buf[2*threadIdx.x+1] = sum_loss1;
       }
       __syncthreads();
       if (threadIdx.y !=0) {
-        sum_loss2 = buf[2*threadIdx.x+1];
+        sum_loss1 = buf[2*threadIdx.x+1];
       }
     }
     // all threads now have the two sums over l
@@ -666,9 +665,9 @@ void cuComputeGradInput(
         U f_grad_input = fH * c_loss * k_gamma;
 
           if (MemoryEfficient) {
-            f_grad_input -= c_h / k_gamma * sum_loss2;
+            f_grad_input -= c_h / k_gamma * sum_loss1;
           } else {
-            f_grad_input -= c_h * c_invvar * sum_loss2;
+            f_grad_input -= c_h * c_invvar * sum_loss1;
           }
 
         f_grad_input *= term1;
@@ -699,7 +698,7 @@ __global__ void cuComputeGradInput(
     bool rms_only)
 {
     for (auto i1 = blockIdx.y; i1 < n1; i1 += gridDim.y) {
-        U sum_loss2 = U(0);
+        U sum_loss1 = U(0);
         const T* k_h = input_or_output + i1 * n2;
         const V* k_dout = dout + i1 * n2;
         const U c_invvar = invvar[i1];
@@ -715,9 +714,9 @@ __global__ void cuComputeGradInput(
                     const U c_loss = static_cast<U>(k_dout[l + k]);
 
                     if (MemoryEfficient) {
-                        sum_loss2 += c_loss * c_h;
+                        sum_loss1 += c_loss * c_h;
                     } else {
-                        sum_loss2 += c_loss * gamma[l + k] * c_h * c_invvar;
+                        sum_loss1 += c_loss * gamma[l + k] * c_h * c_invvar;
                     }
                 }
             }
@@ -726,9 +725,9 @@ __global__ void cuComputeGradInput(
                 const U c_loss = static_cast<U>(k_dout[l]);
 
                 if (MemoryEfficient) {
-                    sum_loss2 += c_loss * c_h;
+                    sum_loss1 += c_loss * c_h;
                 } else {
-                    sum_loss2 += c_loss * gamma[l] * c_h * c_invvar;
+                    sum_loss1 += c_loss * gamma[l] * c_h * c_invvar;
                 }
             }
         } else {
@@ -739,9 +738,9 @@ __global__ void cuComputeGradInput(
                     const U c_loss = static_cast<U>(k_dout[l + k]);
 
                     if (MemoryEfficient) {
-                        sum_loss2 += c_loss * c_h;
+                        sum_loss1 += c_loss * c_h;
                     } else {
-                        sum_loss2 += c_loss * c_h * c_invvar;
+                        sum_loss1 += c_loss * c_h * c_invvar;
                     }
                 }
             }
@@ -750,16 +749,16 @@ __global__ void cuComputeGradInput(
                 const U c_loss = static_cast<U>(k_dout[l]);
 
                 if (MemoryEfficient) {
-                    sum_loss2 += c_loss * c_h;
+                    sum_loss1 += c_loss * c_h;
                 } else {
-                    sum_loss2 += c_loss * c_h * c_invvar;
+                    sum_loss1 += c_loss * c_h * c_invvar;
                 }
             }
         }
 
         // Intra-warp reductions
         for (int mask = blockDim.x / 2; mask > 0; mask /= 2) {
-            sum_loss2 += WARP_SHFL_XOR(sum_loss2, mask);
+            sum_loss1 += WARP_SHFL_XOR(sum_loss1, mask);
         }
 
         // Inter-warp reductions
@@ -768,24 +767,24 @@ __global__ void cuComputeGradInput(
             U* buf = shared.getPointer();
 
             if (threadIdx.y == 0) {
-                buf[threadIdx.x] = sum_loss2;
+                buf[threadIdx.x] = sum_loss1;
             }
             __syncthreads();
 
             for (int offset = blockDim.y / 2; offset > 0; offset /= 2) {
                 if (threadIdx.y < offset) {
-                    sum_loss2 += buf[threadIdx.x + blockDim.x * offset];
+                    sum_loss1 += buf[threadIdx.x + blockDim.x * offset];
                 }
                 __syncthreads();
 
                 if (threadIdx.y == 0) {
-                    buf[threadIdx.x] = sum_loss2;
+                    buf[threadIdx.x] = sum_loss1;
                 }
                 __syncthreads();
             }
 
             if (threadIdx.y == 0) {
-                sum_loss2 = buf[threadIdx.x];
+                sum_loss1 = buf[threadIdx.x];
             }
             __syncthreads();
         }
@@ -803,9 +802,9 @@ __global__ void cuComputeGradInput(
                 U f_grad_input = fH * c_loss * k_gamma;
 
                 if (MemoryEfficient) {
-                    f_grad_input -= c_h / k_gamma * sum_loss2;
+                    f_grad_input -= c_h / k_gamma * sum_loss1;
                 } else {
-                    f_grad_input -= c_h * c_invvar * sum_loss2;
+                    f_grad_input -= c_h * c_invvar * sum_loss1;
                 }
 
                 f_grad_input *= term1;
