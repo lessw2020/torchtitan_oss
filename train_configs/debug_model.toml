@@ -7,14 +7,14 @@ description = "Llama 3 debug training"
 use_for_integration_test = true
 
 [profiling]
-enable_profiling = true
+enable_profiling = false
 save_traces_folder = "profile_trace"
 profile_freq = 10
 
 [metrics]
 log_freq = 1
 enable_color_printing = true
-enable_tensorboard = true
+enable_tensorboard = false
 save_tb_folder = "tb"
 
 [model]
@@ -40,7 +40,6 @@ pipeline_parallel_degree = 1
 fp8_linear = ""
 compile = false
 dataset = "c4_mini"  # supported datasets: c4_mini (45K), c4 (177M)
-mixed_precision_param = "float32"
 
 [checkpoint]
 enable_checkpoint = false

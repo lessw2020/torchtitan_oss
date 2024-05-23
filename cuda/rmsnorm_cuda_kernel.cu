@@ -129,67 +129,7 @@ __device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int 
         sigma2 = __fdividef(buf[0], static_cast<float>(n2));
     }
 }
-/*
-template<typename T, typename U>
-__device__ void cuRMSSigma2(const T* __restrict__ vals, const int n1, const int n2, const int i1, U& sigma2, U* buf) {
-    // Assumptions:
-    // 1) blockDim.x == warpSize
-    // 2) Tensor is contiguous
-    // 3) blockDim.y*sizeof(U) shared memory available.
-    //
-    // compute sum of squares over n2
-    sigma2 = U(0);
-    if (i1 < n1) {
-        const int num_x = blockDim.x * blockDim.y;
-        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
-        const T* lvals = vals + i1 * n2;
 
-        // Unrolled loop with 4 elements per iteration
-        for (int l = 4 * tx; l < n2; l += 4 * num_x) {
-            U tmp = U(0);
-            #pragma unroll
-            for (int k = 0; k < 4; ++k) {
-                if (l + k < n2) {
-                    const U curr = static_cast<U>(__ldg(&lvals[l + k]));
-                    tmp += curr * curr;
-                }
-            }
-            sigma2 += tmp;
-        }
-
-        // Intra-warp reductions using WARP_SHFL_XOR
-        #pragma unroll
-        for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-            sigma2 += WARP_SHFL_XOR(sigma2, offset);
-        }
-
-        // Inter-warp reductions using shared memory
-        if (blockDim.y > 1) {
-            U* ubuf = (U*)buf;
-            if (threadIdx.x == 0) {
-                ubuf[threadIdx.y] = sigma2;
-            }
-            __syncthreads();
-
-            if (threadIdx.y == 0) {
-                sigma2 = U(0);
-                #pragma unroll
-                for (int i = 0; i < blockDim.y; ++i) {
-                    sigma2 += ubuf[i];
-                }
-            }
-            __syncthreads();
-        }
-
-        if (threadIdx.x == 0 && threadIdx.y == 0) {
-            buf[0] = sigma2;
-        }
-        __syncthreads();
-
-        sigma2 = buf[0] / U(n2);
-    }
-}
-*/
 template<typename U> U rsqrt(U v) {
   return U(1) / sqrt(v);
 }
@@ -240,50 +180,6 @@ struct SharedMemory <double>
 } // end namespace
 
 /*
-template<typename T, typename U, typename V=T> __global__
-void cuApplyRMSNorm(
-  V* __restrict__ output_vals,
-  U* __restrict__ invvar,
-  const T* __restrict__ vals,
-  const int n1,
-  const int n2,
-  const U epsilon,
-  const V* __restrict__ gamma)
-
-{
-  // Assumptions:
-  // 1) blockDim.x == warpSize
-  // 2) Tensors are contiguous
-  //
-  for (auto i1=blockIdx.y; i1 < n1; i1 += gridDim.y) {
-    SharedMemory<U> shared;
-    U* buf = shared.getPointer();
-    U mu,sigma2;
-    cuRMSSigma2(vals,n1,n2,i1,sigma2,buf);
-
-    const T* lvals = vals + i1*n2;
-    V* ovals = output_vals + i1*n2;
-    U c_invvar = rsqrt(sigma2 + epsilon);
-    const int numx = blockDim.x * blockDim.y;
-    const int tx = threadIdx.x + threadIdx.y * blockDim.x;
-    //if (gamma != nullptr) {
-    for (int i = tx;  i < n2;  i+=numx) {
-        U curr = static_cast<U>(lvals[i]);
-        ovals[i] = gamma[i] * static_cast<V>(c_invvar * curr);
-      }
-    /*} else {
-      for (int i = tx;  i < n2;  i+=numx) {
-        U curr = static_cast<U>(lvals[i]);
-        ovals[i] = static_cast<V>(c_invvar * curr);
-      }
-    //}
-    if (threadIdx.x == 0 && threadIdx.y == 0) {
-      invvar[i1] = c_invvar;
-    }
-    __syncthreads();
-  }
-}
-*/
 template<typename T, typename V = T>
 __global__ void cuApplyRMSNorm(
     V* __restrict__ output_vals,
@@ -330,7 +226,93 @@ __global__ void cuApplyRMSNorm(
         __syncthreads();
     }
 }
+*/
 
+template<typename T, typename V = T>
+__global__ void cuApplyRMSNorm(
+    V* __restrict__ output_vals,
+    float* __restrict__ invvar,
+    const T* __restrict__ vals,
+    const int n1,
+    const int n2,
+    const float epsilon,
+    const V* __restrict__ gamma)
+{
+    // Requires:
+    // 1) blockDim.x == warpSize
+    // 2) Tensors are contiguous
+    //
+    for (auto i1 = blockIdx.y; i1 < n1; i1 += gridDim.y) {
+        __shared__ float buf[1];
+        float sigma2;
+
+        //aggregate Sigma2
+        cuRMSSigma2(vals, n1, n2, i1, sigma2, buf);
+
+        const T* lvals = vals + i1 * n2;
+        V* ovals = output_vals + i1 * n2;
+        float c_invvar = __frsqrt_rn(sigma2 + epsilon);
+
+        const int num_x = blockDim.x * blockDim.y;
+        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
+
+        // Unrolled loop with 4 elements per iteration
+        for (int i = 4 * tx; i < n2; i += 4 * num_x) {
+            float4 curr_vals;
+            float4 gamma_vals;
+
+            // Load 4 elements into float4 variables
+            if (i + 3 < n2) {
+                curr_vals = __ldg(reinterpret_cast<const float4*>(&lvals[i]));
+                if (gamma != nullptr) {
+                    gamma_vals = __ldg(reinterpret_cast<const float4*>(&gamma[i]));
+                }
+            } else {
+                // Handle remaining elements
+                curr_vals.x = (i < n2) ? static_cast<float>(lvals[i]) : 0.0f;
+                curr_vals.y = (i + 1 < n2) ? static_cast<float>(lvals[i + 1]) : 0.0f;
+                curr_vals.z = (i + 2 < n2) ? static_cast<float>(lvals[i + 2]) : 0.0f;
+                curr_vals.w = 0.0f;
+
+                if (gamma != nullptr) {
+                    gamma_vals.x = (i < n2) ? static_cast<float>(gamma[i]) : 1.0f;
+                    gamma_vals.y = (i + 1 < n2) ? static_cast<float>(gamma[i + 1]) : 1.0f;
+                    gamma_vals.z = (i + 2 < n2) ? static_cast<float>(gamma[i + 2]) : 1.0f;
+                    gamma_vals.w = 1.0f;
+                }
+            }
+
+            // Apply normalization
+            if (gamma != nullptr) {
+                curr_vals.x *= c_invvar * gamma_vals.x;
+                curr_vals.y *= c_invvar * gamma_vals.y;
+                curr_vals.z *= c_invvar * gamma_vals.z;
+                curr_vals.w *= c_invvar * gamma_vals.w;
+            } else {
+                curr_vals.x *= c_invvar;
+                curr_vals.y *= c_invvar;
+                curr_vals.z *= c_invvar;
+                curr_vals.w *= c_invvar;
+            }
+
+            // Store the normalized values
+            if (i + 3 < n2) {
+                *reinterpret_cast<float4*>(&ovals[i]) = curr_vals;
+            } else {
+                if (i < n2) ovals[i] = static_cast<V>(curr_vals.x);
+                if (i + 1 < n2) ovals[i + 1] = static_cast<V>(curr_vals.y);
+                if (i + 2 < n2) ovals[i + 2] = static_cast<V>(curr_vals.z);
+            }
+        }
+
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            invvar[i1] = c_invvar;
+        }
+        __syncthreads();
+    }
+}
+
+// Rest of the code remains the same
 
 template<typename V> __device__
 V clamp_by_magnitude(V curr_gamma, double eps)

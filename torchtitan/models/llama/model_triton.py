@@ -20,6 +20,7 @@ import triton
 import triton.language as tl
 import time
 import math
+from torchtitan.logging_utils import init_logger, logger
 
 
 @dataclass
@@ -198,8 +199,11 @@ def group_gemm_fn(group_A, group_B, config = None):
     g_lds = []
     group_C = []
     for i in range(group_size):
+
         A = group_A[i]
         B = group_B[i]
+        print(f"{A.shape=}, {B.shape=}")
+        #A.shape=torch.Size([16384, 4096]), B.shape=torch.Size([11008, 4096])
         assert A.shape[1] == B.shape[0]
         M, K = A.shape
         K, N = B.shape
@@ -220,7 +224,7 @@ def group_gemm_fn(group_A, group_B, config = None):
     # we use a fixed number of CTA, and it's auto-tunable
 
     num_sm = 132
-    if config:
+    '''if config:
         block_m = config["block_m"]
         block_n = config["block_n"]
         block_k = config["block_k"]
@@ -228,11 +232,12 @@ def group_gemm_fn(group_A, group_B, config = None):
         num_stages = config["num_stages"]
 
     else:
-        block_m = 128
-        block_n = 256
-        block_k = 32
-        num_warps = 8
-        num_stages = 4
+    '''
+    block_m = 64 # 128
+    block_n = 64 # 256
+    block_k = 64 # 32
+    num_warps = 8
+    num_stages = 4
 
     grid = (num_sm, )
     gemm_grouped_matmul_kernel[grid](
@@ -258,12 +263,29 @@ class _matmul(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, a, b):
+        print(f"a pre squeeze shape: {a.shape}, {b.shape=}")
+        if a.dtype == torch.float32:
+            a = a.to(torch.bfloat16)
+        if b.dtype == torch.float32:
+            b = b.to(torch.bfloat16)
 
-        m, _ = a.shape
+        s = a.size()
+        if a.dim() >= 3:
+            #a = torch.flatten(a, start_dim=-2)
+            a = a.view(s[0] * s[1], s[2])
+
+        assert a.dtype== b.dtype, f"mismatch: {a.dtype}, {b.dtype}"
+        print(f"a post squeeze shape: {a.shape}")
+        m, k1 = a.shape # 16384, 11008
+        k, n = b.shape # 4096, 11008
+        if k1 != k:
+            b = b.T  # 11008, 4096
+            print(f"b post transpose shape: {b.shape= }, {a.shape=}")
+        print(f"m post squeeze shape: {m=}")
         k, n = b.shape
 
-        block_m = 128
-        block_n = 256
+        block_m = 64 #128
+        block_n =  64 # 256
         block_k = 64
         num_warps = 8
         num_stages = 2
@@ -273,7 +295,7 @@ class _matmul(torch.autograd.Function):
         num_n_tiles = triton.cdiv(n, block_n)
         total_tiles = num_m_tiles * num_n_tiles
 
-        c = torch.zeros(m, n, dtype=torch.bfloat16, device=a.device)
+        c = torch.zeros(m, n, dtype=torch.float32, device=a.device)
         grid = (sms,)
 
         gemm_balanced[grid](a, b, c,
@@ -290,6 +312,7 @@ class _matmul(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dL_dc):
+        print(f"line 314:  *** In backward final return *** ")
         """
         Equations:
                  1. dL/da = dL/dc @ b.T
@@ -310,11 +333,44 @@ class _matmul(torch.autograd.Function):
                 dL_dc: partial(L)/partial(c)
         """
         a, b = ctx.saved_tensors
+        print(f"{a.shape=}, {b.shape=}, {dL_dc.shape=}")
+        # a.shape=torch.Size([16384, 11008]),
+        # b.shape=torch.Size([11008, 4096]),
+        # dL_dc.shape=torch.Size([16384, 4096])
+
+        # [11008, 4096] but expected shape compatible with [4096, 11008]
+        # a.shape=torch.Size([16384, 11008]),
+        #b.shape=torch.Size([11008, 4096]),
+        #dL_dc.shape=torch.Size([16384, 4096])
+
+        #b = b.T
+        #dL_da = torch.matmul(dL_dc, b.T)
+        #dL_db = torch.matmul(a.T, dL_dc)
+        #print(f"In backward final return 347")
+        #return dL_da, dL_db.T
 
         group_a = [dL_dc, a.permute(1, 0).contiguous()]
+        print(f"***** past group_a..")
+
         group_b = [b.permute(1, 0).contiguous(), dL_dc]
+        print(f"**** past group_b..")
 
         group_derivs = group_gemm_fn(group_a, group_b)
+        print(f"**** past group_derivs..")
+        print(f"{group_derivs[0].shape=}, {group_derivs[1].shape=}")
+        print(f"&&&&&&&&&&&&&&&&&&&&&&&&&")
+        # got [16384, 4096] but expected shape compatible with [8, 2048, 4096]
+        #Function _matmulBackward returned an invalid gradient at index 0 - got [8, 2048, 11008]
+        #but expected shape compatible with [16384, 11008]
+        # latest error 1:155
+
+        # got [16384, 4096] but expected shape compatible with [8, 2048, 4096]
+        # vs
+        # got [8, 2048, 11008] but expected shape compatible with [16384, 11008]
+
+        #if group_derivs[0].dim() ==2:
+        #    s = group_derivs[0].size()
+         #   group_derivs[0] = group_derivs[0].view(8, 2048, -1)
 
         return group_derivs[0], group_derivs[1]
 
@@ -327,7 +383,7 @@ class TritonLinear(nn.Module):
         super(TritonLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = nn.Parameter(torch.empty(out_features, in_features, dtype=torch.bfloat16, device='cuda'))
+        self.weight = nn.Parameter(torch.empty(out_features, in_features, dtype=torch.float32, device='cuda'))
 
 
     def forward(self, input):
@@ -538,16 +594,18 @@ class FeedForward(nn.Module):
         ffn_dim_multiplier: Optional[float],
     ):
         super().__init__()
-        hidden_dim = int(2 * hidden_dim / 3)
+        hidden_dim = int(hidden_dim) #  / 3)
         # custom dim factor multiplier
         if ffn_dim_multiplier is not None:
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
         _useTriton = True
         if _useTriton:
+            print(f"Triton Linear Init ++++++++++++++")
             self.w1 = TritonLinear(dim, hidden_dim) # nn.Linear(dim, hidden_dim, bias=False)
-            self.w2 = TritonLinear(dim, hidden_dim) # nn.Linear(hidden_dim, dim, bias=False)
+            self.w2 = TritonLinear(hidden_dim, dim ) # nn.Linear(hidden_dim, dim, bias=False)
             self.w3 = TritonLinear(dim, hidden_dim) # nn.Linear(dim, hidden_dim, bias=False)
+
         else:
             self.w1 = nn.Linear(dim, hidden_dim, bias=False)
             self.w2 = nn.Linear(hidden_dim, dim, bias=False)
@@ -555,6 +613,11 @@ class FeedForward(nn.Module):
 
 
     def forward(self, x):
+        print(f"** START FORWARD MLP:\n{x.shape=}")
+        print(f"{self.w1.weight.shape=}, \n{self.w2.weight.shape=}, \n{self.w3.weight.shape=}")
+        print(f"*********************")
+        s = x.size()
+        x = x.view(s[0]* s[1], -1) #
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     def init_weights(self, init_std: float):
@@ -625,8 +688,23 @@ class TransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
+        bs, seqlen = x.shape[:2]
         h = x + self.attention(self.attention_norm(x), freqs_cis)
-        out = h + self.feed_forward(self.ffn_norm(h))
+        print(f"{h.shape=}, {x.shape=}")
+        y = self.feed_forward(self.ffn_norm(h))
+        print(f"{y.shape=}, {h.shape=}")
+        # y.shape=torch.Size([16384, 4096]), h.shape=torch.Size([8, 2048, 4096])
+
+        if h.dim() == 3:
+            s = h.size()
+            h = h.view(s[0]*s[1], -1) # torch.permute(h, (0, 2, 1))
+
+        out = h + y
+        print(f"{out.shape=}, {h.shape=}")
+        if out.dim() ==2:
+            s = out.size()
+            out = out.view(bs, seqlen, -1)
+
         return out
 
     def init_weights(self):
@@ -737,7 +815,11 @@ class Transformer(nn.Module):
         for layer in self.layers.values():
             h = layer(h, self.freqs_cis)
 
+
         h = self.norm(h) if self.norm else h
+        print(f"{h.shape=}, {h.dtype=}")
+        h = h.to(torch.bfloat16)
+        print(f"{self.output.weight.dtype=}")
         output = self.output(h).float() if self.output else h
         return output
 

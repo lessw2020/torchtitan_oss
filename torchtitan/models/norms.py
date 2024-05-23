@@ -58,6 +58,9 @@ class FusedRMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """leverages Triton Fused RMS Norm kernel"""
+        print(f"rms fwd norm == x.shape: {x.shape}")
+        print(f"rms fwd norm == x.dtype: {x.dtype}")
+        print(f"{self.weight.shape=}")
         return self.fused_rms_norm_fn(
             x,
             self.weight,
