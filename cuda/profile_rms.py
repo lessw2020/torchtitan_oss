@@ -15,14 +15,15 @@ from fused_rms_norm import FusedRMSNorm
 
 n_dim = 8192
 
-layer_weight_size = (20, n_dim)
+layer_weight_size = (n_dim)
 
 test_eps = 1e-8
 atol_precision = 1e-2
 rtol_precision = 1e-2
+batch_size = 20 * 1024
 
 sample_x = torch.randn(
-    layer_weight_size, dtype=torch.float32, device="cuda", requires_grad=True
+    (batch_size, layer_weight_size), dtype=torch.float32, device="cuda", requires_grad=True
 )
 
 #expected_rms_func = TorchRMSNorm(layer_weight_size, eps=test_eps).to("cuda")

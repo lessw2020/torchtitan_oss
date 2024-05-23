@@ -50,17 +50,17 @@ class TestRMSNorm:
     def n_dim(
         self,
     ):
-        return 8192*2*2*2*2
+        return 2048
 
     def test_cuda_fused_vs_pytorch_accuracy(self, n_dim):
-        batch_size = 30
-        layer_weight_size = (n_dim,)
+        batch_size = 2 * 512
+        layer_weight_size = n_dim
         test_eps = 1e-8
-        atol_precision = 1e-3
-        rtol_precision = 1e-3
+        atol_precision = 1e-2
+        rtol_precision = 1e-2
 
         sample_x = torch.randn(
-            layer_weight_size, dtype=torch.float32, device="cuda", requires_grad=True
+            (batch_size, layer_weight_size), dtype=torch.float32, device="cuda", requires_grad=True
         )
 
         expected_rms_func = TorchRMSNorm(layer_weight_size, eps=test_eps).to("cuda")

@@ -129,7 +129,7 @@ class FusedRMSNorm(torch.nn.Module):
     .. _`Root Mean Square Layer Normalization`: https://arxiv.org/pdf/1910.07467.pdf
     """
 
-    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True, memory_efficient=False):
+    def __init__(self, normalized_shape, eps=1e-6, elementwise_affine=True, memory_efficient=False):
         super().__init__()
 
         global titan_cuda

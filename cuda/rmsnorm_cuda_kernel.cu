@@ -179,7 +179,6 @@ struct SharedMemory <double>
 };
 } // end namespace
 
-/*
 template<typename T, typename V = T>
 __global__ void cuApplyRMSNorm(
     V* __restrict__ output_vals,
@@ -203,55 +202,7 @@ __global__ void cuApplyRMSNorm(
 
         const T* lvals = vals + i1 * n2;
         V* ovals = output_vals + i1 * n2;
-        float c_invvar = rsqrtf(sigma2 + epsilon);
-
-        const int num_x = blockDim.x * blockDim.y;
-        const int tx = threadIdx.x + threadIdx.y * blockDim.x;
-
-        // with gamma
-        for (int i = tx; i < n2; i += num_x) {
-            float curr = static_cast<float>(lvals[i]);
-            ovals[i] = gamma[i] * static_cast<V>(c_invvar * curr);
-        }
-
-        // without gamma
-        //for (int i = tx;  i < n2;  i+=num_x) {
-        //  float curr = static_cast<float>(lvals[i]);
-        //  ovals[i] = static_cast<V>(c_invvar * curr);
-      //}
-
-        if (threadIdx.x == 0 && threadIdx.y == 0) {
-            invvar[i1] = c_invvar;
-        }
-        __syncthreads();
-    }
-}
-*/
-
-template<typename T, typename V = T>
-__global__ void cuApplyRMSNorm(
-    V* __restrict__ output_vals,
-    float* __restrict__ invvar,
-    const T* __restrict__ vals,
-    const int n1,
-    const int n2,
-    const float epsilon,
-    const V* __restrict__ gamma)
-{
-    // Requires:
-    // 1) blockDim.x == warpSize
-    // 2) Tensors are contiguous
-    //
-    for (auto i1 = blockIdx.y; i1 < n1; i1 += gridDim.y) {
-        __shared__ float buf[1];
-        float sigma2;
-
-        //aggregate Sigma2
-        cuRMSSigma2(vals, n1, n2, i1, sigma2, buf);
-
-        const T* lvals = vals + i1 * n2;
-        V* ovals = output_vals + i1 * n2;
-        float c_invvar = __frsqrt_rn(sigma2 + epsilon);
+        float c_invvar = __frsqrt_rn(sigma2 + epsilon); //backup = rsqrtf
 
         const int num_x = blockDim.x * blockDim.y;
         const int tx = threadIdx.x + threadIdx.y * blockDim.x;
@@ -261,14 +212,14 @@ __global__ void cuApplyRMSNorm(
             float4 curr_vals;
             float4 gamma_vals;
 
-            // Load 4 elements into float4 variables
+            // Global Load - 4 elements
             if (i + 3 < n2) {
                 curr_vals = __ldg(reinterpret_cast<const float4*>(&lvals[i]));
                 if (gamma != nullptr) {
                     gamma_vals = __ldg(reinterpret_cast<const float4*>(&gamma[i]));
                 }
             } else {
-                // Handle remaining elements
+                // Handle remaining elements, if any
                 curr_vals.x = (i < n2) ? static_cast<float>(lvals[i]) : 0.0f;
                 curr_vals.y = (i + 1 < n2) ? static_cast<float>(lvals[i + 1]) : 0.0f;
                 curr_vals.z = (i + 2 < n2) ? static_cast<float>(lvals[i + 2]) : 0.0f;
@@ -312,7 +263,6 @@ __global__ void cuApplyRMSNorm(
     }
 }
 
-// Rest of the code remains the same
 
 template<typename V> __device__
 V clamp_by_magnitude(V curr_gamma, double eps)
@@ -481,14 +431,14 @@ __global__ void cuComputePartGradGammaBeta(
     const T* __restrict__ input_or_output,
     const int n1,
     const int n2,
-    const U* __restrict__ mean,
+    //const U* __restrict__ mean,
     const U* __restrict__ invvar,
     U epsilon,
     const V* __restrict__ gamma,
-    const V* __restrict__ beta,
+    //const V* __restrict__ beta,
     U* part_grad_gamma,
-    U* part_grad_beta,
-    const double eps)
+    //U* part_grad_beta,
+    const float eps)
 {
     const int block_size = blockDim.y * blockDim.y;
     const int numsegs_n1 = (n1 + block_size - 1) / block_size;
@@ -551,13 +501,13 @@ __global__ void cuComputePartGradGammaBeta(
 template<typename U, typename V> __global__
 void cuComputeGradGammaBeta(
     const U* part_grad_gamma,
-    const U* part_grad_beta,
+    //const U* part_grad_beta,
     const int part_size,
     const int n1,
     const int n2,
-    V* grad_gamma,
-    V* grad_beta,
-    bool rms_only)
+    V* grad_gamma)
+    //V* grad_beta,
+    //bool rms_only)
 {
     // sum partial gradients for gamma and beta
     SharedMemory<U> shared;
@@ -909,12 +859,12 @@ void HostRMSNormGradient(
                 input_or_output->DATA_PTR<T>(),
                 n1, n2,
                 invvar,
-                invvar,  // unused
+                //invvar,  // unused
                 U(epsilon),
                 gamma,
-                gamma,  // unused
+                //gamma,  // unused
                 part_grad_gamma.DATA_PTR<U>(),
-                part_grad_gamma.DATA_PTR<U>(),  // unused
+                //part_grad_gamma.DATA_PTR<U>(),  // unused
                 epsilon);
         });
 
@@ -926,12 +876,12 @@ void HostRMSNormGradient(
 
         cuComputeGradGammaBeta<<<blocks3, threads3, nshared3, stream>>>(
             part_grad_gamma.DATA_PTR<U>(),
-            part_grad_gamma.DATA_PTR<U>(),  // unused
+            //part_grad_gamma.DATA_PTR<U>(),  // unused
             part_size,
             n1, n2,
-            grad_gamma,
-            grad_gamma,  // unused
-            true);  // unused
+            grad_gamma);
+            //grad_gamma,  // unused
+            //true);  // unused
     }
 
     // compute grad_input
@@ -958,8 +908,6 @@ void HostRMSNormGradient(
             true);
     });
 }
-
-
 
 
 void cuda_rms_norm_gradient(
