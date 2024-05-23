@@ -431,13 +431,10 @@ __global__ void cuComputePartGradGammaBeta(
     const T* __restrict__ input_or_output,
     const int n1,
     const int n2,
-    //const U* __restrict__ mean,
     const U* __restrict__ invvar,
     U epsilon,
     const V* __restrict__ gamma,
-    //const V* __restrict__ beta,
     U* part_grad_gamma,
-    //U* part_grad_beta,
     const float eps)
 {
     const int block_size = blockDim.y * blockDim.y;
@@ -859,12 +856,9 @@ void HostRMSNormGradient(
                 input_or_output->DATA_PTR<T>(),
                 n1, n2,
                 invvar,
-                //invvar,  // unused
                 U(epsilon),
                 gamma,
-                //gamma,  // unused
                 part_grad_gamma.DATA_PTR<U>(),
-                //part_grad_gamma.DATA_PTR<U>(),  // unused
                 epsilon);
         });
 
@@ -929,6 +923,7 @@ void cuda_rms_norm_gradient(
       gamma == nullptr ? input_or_output->scalar_type() :  gamma->scalar_type(),
       "cuComputeGradInputRMS",
       using accscalar_t = at::acc_type<scalar_t_in, true>;
+
       HostRMSNormGradient(
         dout->DATA_PTR<scalar_t_out>(),
         invvar->DATA_PTR<accscalar_t>(),
