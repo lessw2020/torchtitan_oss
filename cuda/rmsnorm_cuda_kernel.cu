@@ -979,8 +979,6 @@ void cuda_rms_norm_gradient(
         invvar->DATA_PTR<accscalar_t>(),
         input_or_output,
         n1,n2,
-            // TMJ pass nullptr argument for gamma, beta, grad_gamma and grad_beta
-            // if gamma Tensor is nullptr on input.
         gamma != nullptr ? gamma->DATA_PTR<scalar_t_out>() : nullptr,
         epsilon,
         grad_input->DATA_PTR<scalar_t_in>(),
