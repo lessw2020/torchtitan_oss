@@ -14,6 +14,7 @@ from torch.optim.optimizer import Optimizer
 try:
     from torchtitan.utils import logger
 except:
+    print("no logger")
     pass
 
 
@@ -40,7 +41,8 @@ class FAdam(Optimizer):
                 running averages of gradient and its square (default: (0.9, 0.999))
             eps (float, optional): term added to the denominator to improve
                 numerical stability (default: 1e-15)
-            TODO - explain c and p
+            clip (float, optional): maximum norm of the gradient (default: 1.0)
+            TODO - explain p
 
             # Usage
             TODO
@@ -119,18 +121,25 @@ class FAdam(Optimizer):
 
                 momentum = state["momentum"]
                 fim = state["fim"]
-                #clip = state["clip"]
                 grad = p.grad
 
                 # begin FAdam algo -------------------------
                 #6 - beta2 bias correction per Section 3.4.4
-                curr_beta2 = beta2 *((1-beta2**step-1)/(1-beta2**step))
+                curr_beta2 = (beta2 *((1-beta2**(step-1)))/(1-beta2**step))
 
                 #7 - update fim
                 fim = (curr_beta2*fim) + (1-curr_beta2)*(grad*grad)
+                #if step == 1:
+                #    print(f"{fim=}")
 
                 #8 - compute natural gradient
-                grad_nat = grad/(fim+eps)
+                fim_base = fim**pval + eps# **2*pval
+                #if step == 1:
+                #    print(f"{fim_base=}")
+
+                grad_nat = grad/fim_base
+                #if step == 1:
+                #    print(f"{grad_nat=}")
 
                 #9 - clip the natural gradient
                 rms = torch.sqrt(torch.mean(grad_nat**2))
@@ -139,10 +148,9 @@ class FAdam(Optimizer):
                 grad_nat = grad_nat/divisor
 
                 #10 - update momentum
-                momentum.mul_(beta1).add_(grad, alpha=1-beta1)
-
+                momentum.mul_(beta1).add_(grad_nat, alpha=1-beta1)
                 #11 - weight decay
-                grad_weights = p/(fim+eps)
+                grad_weights = p/fim_base
 
                 #12 - clip weight decay
                 rms = torch.sqrt(torch.mean(grad_weights**2))
@@ -151,8 +159,18 @@ class FAdam(Optimizer):
 
                 grad_weights = grad_weights/ divisor
 
-                #13 - update weights
-                p = p - lr*(momentum+(weight_decay*grad_weights))
+                #13 - compute update
+                full_step = momentum +(weight_decay*grad_weights)
+
+                lr_step = lr * full_step
+                #lr_step *=10000
+                #print(f"lr_step {lr_step}")
+
+                #14 - update weights
+                #print(f"pre-step {p.data}")
+                p.sub_(lr_step)
+                #print(f"post-step {p.data}")
+
 
 
             '''

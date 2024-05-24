@@ -100,7 +100,7 @@ def build_optimizer(model, job_config: JobConfig):
         )
     elif name == "AdamW":
         optimizer = torch.optim.AdamW(
-            model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1, foreach=True
+            model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1, foreach=False
         )
     elif name == "FAdam":
         optimizer = FAdam(model.parameters(), lr=lr)
