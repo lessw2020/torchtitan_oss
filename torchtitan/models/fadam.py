@@ -23,7 +23,7 @@ class FAdam(Optimizer):
         self,
         params,
         lr=1e-3,
-        weight_decay = 0.001,
+        weight_decay = 0.01,
         betas=(0.9, 0.999),
         clip = 1.0,
         p = 0.5,
@@ -129,17 +129,11 @@ class FAdam(Optimizer):
 
                 #7 - update fim
                 fim = (curr_beta2*fim) + (1-curr_beta2)*(grad*grad)
-                #if step == 1:
-                #    print(f"{fim=}")
 
                 #8 - compute natural gradient
                 fim_base = fim**pval + eps# **2*pval
-                #if step == 1:
-                #    print(f"{fim_base=}")
 
                 grad_nat = grad/fim_base
-                #if step == 1:
-                #    print(f"{grad_nat=}")
 
                 #9 - clip the natural gradient
                 rms = torch.sqrt(torch.mean(grad_nat**2))
@@ -156,20 +150,14 @@ class FAdam(Optimizer):
                 rms = torch.sqrt(torch.mean(grad_weights**2))
                 divisor = max(1,rms)
                 divisor /= clip
-
                 grad_weights = grad_weights/ divisor
 
                 #13 - compute update
                 full_step = momentum +(weight_decay*grad_weights)
-
                 lr_step = lr * full_step
-                #lr_step *=10000
-                #print(f"lr_step {lr_step}")
 
                 #14 - update weights
-                #print(f"pre-step {p.data}")
                 p.sub_(lr_step)
-                #print(f"post-step {p.data}")
 
 
 
