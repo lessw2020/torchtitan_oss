@@ -25,14 +25,14 @@ norm_type = "fused_rmsnorm"  # layernorm / np_layernorm / rmsnorm / fused_rmsnor
 tokenizer_path = "./test/assets/test_tiktoken.model"
 
 [optimizer]
-name = "FAdam" # [ AdamW, FAdam ]
-lr = 8e-4
+name = "AdamW" # [ AdamW, FAdam ]
+lr = 4e-3
 
 [training]
 batch_size = 8
 seq_len = 2048
-warmup_steps = 40  # lr scheduler warm up, normally 20% of the train steps
-max_norm = 100.0  # grad norm clipping
+warmup_steps = 50  # lr scheduler warm up, normally 20% of the train steps
+max_norm = 1.0  # grad norm clipping
 steps = 200
 data_parallel_degree = -1
 tensor_parallel_degree = 1

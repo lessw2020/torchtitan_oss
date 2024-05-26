@@ -103,7 +103,7 @@ def build_optimizer(model, job_config: JobConfig):
             model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1, foreach=False
         )
     elif name == "FAdam":
-        optimizer = FAdam(model.parameters(), lr=lr, weight_decay=0.01,)
+        optimizer = FAdam(model.parameters(), betas=(0.95, 0.98), lr=lr, weight_decay=0.1,)
         logger.info(f"Using FAdam Optimizer")
     else:
         raise NotImplementedError(f"Optimizer {name} not added.")
