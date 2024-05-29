@@ -14,31 +14,34 @@ profile_freq = 10
 [metrics]
 log_freq = 1
 enable_color_printing = true
-enable_tensorboard = false
+enable_tensorboard = true
 save_tb_folder = "tb"
 
 [model]
 name = "llama3"
-flavor = "debugmodel"
+flavor = "5B"
 norm_type = "fused_rmsnorm"  # layernorm / np_layernorm / rmsnorm / fused_rmsnorm
 # test tokenizer.model, for debug purpose only
 tokenizer_path = "./test/assets/test_tiktoken.model"
 
 [optimizer]
-name = "AdamW" # [ AdamW, FAdam ]
-lr = 4e-3
+name = "FAdam" # [ AdamW, FAdam ]
+lr = 8e-4
+beta1 = 0.9
+beta2 = 0.999
+weight_decay = 0.01
 
 [training]
 batch_size = 8
 seq_len = 2048
-warmup_steps = 50  # lr scheduler warm up, normally 20% of the train steps
-max_norm = 1.0  # grad norm clipping
-steps = 200
+warmup_steps = 400  # lr scheduler warm up, normally 20% of the train steps
+max_norm = 10.0  # grad norm clipping
+steps = 1000
 data_parallel_degree = -1
 tensor_parallel_degree = 1
 fp8_linear = ""
 compile = false
-dataset = "c4_mini"  # supported datasets: c4_mini (45K), c4 (177M)
+dataset = "c4"  # supported datasets: c4_mini (45K), c4 (177M)
 
 [experimental]
 pipeline_parallel_degree = 1

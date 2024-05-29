@@ -154,10 +154,19 @@ class JobConfig:
 
         # optimizer configs
         self.parser.add_argument(
-            "--optimizer.name", type=str, default="AdamW", help="Optimizer to use"
+            "--optimizer.name", type=str, default="AdamW", help="Optimizer to use",
         )
         self.parser.add_argument(
-            "--optimizer.lr", type=float, default=8e-4, help="Learning rate to use"
+            "--optimizer.lr", type=float, default=8e-4, help="Learning rate to use",
+        )
+        self.parser.add_argument(
+            "--optimizer.beta1", type=float, default=0.9, help="Learning rate to use",
+        )
+        self.parser.add_argument(
+            "--optimizer.beta2", type=float, default=0.95, help="Learning rate to use",
+        )
+        self.parser.add_argument(
+            "--optimizer.weight_decay", type=float, default=0.1, help="Learning rate to use",
         )
 
         # training configs

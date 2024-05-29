@@ -29,8 +29,8 @@ llama2_configs = {
 }
 
 llama3_configs = {
-    "debugmodel": ModelArgs(dim=512, n_layers=4, n_heads=8, rope_theta=500000),
-    "5B": ModelArgs(dim=2048, n_layers=16, n_heads=32, rope_theta=500000),
+    "debugmodel": ModelArgs(dim=1024, n_layers=8, n_heads=8, rope_theta=500000),
+    "5B": ModelArgs(dim=4096, n_layers=20, n_heads=32, rope_theta=500000),
 
     "8B": ModelArgs(
         dim=4096,
