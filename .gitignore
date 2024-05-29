@@ -12,3 +12,7 @@ out
 wandb
 
 torchtitan/datasets/**/*.model
+error.json
+stderr.log
+stdout.log
+_remote_module_non_scriptable.py
