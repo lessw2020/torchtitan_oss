@@ -435,7 +435,12 @@ class save_on_cpu(saved_tensors_hooks):
         self.count =0
         self.uvm_mgr= get_uvm_manager()
         assert self.uvm_mgr is not None, "failed to import uvm_pytorch"
-        self.uvm_cache = defaultdict(list)
+        self.uvm_cache1 = defaultdict(list)
+        self.uvm_cache2 = defaultdict(list)
+        self.caching = False
+        self.iter = 0
+        self.active_cache = None
+        self.storage_cache = None
 
 
 
@@ -463,27 +468,40 @@ class save_on_cpu(saved_tensors_hooks):
                 #   print(f"***** backward took {(end_backward_time - backward_start_time):.3f} seconds")
 
                 #forward_start_time = time.perf_counter()
-                torch_null_stream = torch.cuda.current_stream()
+                #torch_null_stream = torch.cuda.current_stream()
                 print(f"fast lookup size {len(fast_lookup)=}")
-                #fast_lookup.clear()
+                if not self.caching:
+                    fast_lookup.clear()
 
                 print(f"***** first forward")
+                print(f"{self.iter=}")
+                print(f"{len(self.uvm_cache1)=}, {len(self.uvm_cache2)=}")
                 is_first_forward = False
                 is_first_backward = True
                 prev = None
                 self.count = -1
+                self.iter+=1
+
 
             #print(f"***** forward {input_tensor.shape=}, {input_tensor.dtype=}")
             #if input_tensor.dtype == torch.float32:
             #    print(f"***** float32 {input_tensor[0:10]=}")
-            tensor_id = get_tensor_id()
+
             self.count +=1
+            if self.iter % 2 ==0:
+                self.active_cache = self.uvm_cache1
+                self.storage_cache = self.uvm_cache2
+            else:
+                self.active_cache = self.uvm_cache2
+                self.storage_cache = self.uvm_cache1
+
 
             tensor_dtype = input_tensor.dtype
             num_bytes = _get_num_bytes_tensor(input_tensor)
             sizes = input_tensor.size()
             if input_tensor.numel() < min_copy_size or (input_tensor.dtype in self.ignore_types):
                 #print(f"skipping {input_tensor.shape=}, {input_tensor.dtype=}")
+                tensor_id = get_tensor_id()
                 gpu_clone = input_tensor.clone().detach()
                 fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype)  #False = not quantized
                 #prev = tensor_id
@@ -495,14 +513,16 @@ class save_on_cpu(saved_tensors_hooks):
 
 
             size_id = get_tensor_size_id(input_tensor)
-            cache_id = None
             # see if we can reuse a cached tensor
-            if len(self.uvm_cache[size_id]):
-                #print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
-                cache_id, uvm_tensor = self.uvm_cache[size_id].pop()
-                # print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
-                uvm_tensor.copy_(input_tensor)
-                return cache_id
+            if self.index_ready and self.caching and input_tensor.dtype == torch.float32:
+                if len(self.active_cache[size_id]):
+                    #print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
+                    cache_id, uvm_tensor = self.active_cache[size_id].pop()
+                    # print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
+                    uvm_tensor.copy_(input_tensor)
+                    fast_lookup[cache_id] = (uvm_tensor, sizes, input_tensor.dtype)
+                    self.storage_cache[size_id].append((cache_id, uvm_tensor))
+                    return cache_id
 
 
             #if cpu_cache and num_bytes > colossal_tensor_min_bytes and len(tensor_cache[size_id]):
@@ -589,9 +609,13 @@ class save_on_cpu(saved_tensors_hooks):
                     fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype)  #False = not quantized
             '''
             sizes = input_tensor.size()
+            tensor_id = get_tensor_id()
             uvm_storage_tensor = self.uvm_mgr.getManagedTensor(num_bytes, sizes)
-            # cache for next time
-            self.uvm_cache[size_id].append((tensor_id, uvm_storage_tensor))
+            #print(f"created {uvm_storage_tensor.shape=}, {input_tensor.dtype=}")
+            if not self.index_ready and self.caching and input_tensor.dtype == torch.float32:
+                # cache for next time
+                #print(f"storing {size_id=}")
+                self.storage_cache[size_id].append((tensor_id, uvm_storage_tensor))
             # params = (uvm_storage_tensor, input_tensor.dtype)
             uvm_storage_tensor.copy_(input_tensor, non_blocking=False)
             fast_lookup[tensor_id] = (uvm_storage_tensor, sizes, input_tensor.dtype)
@@ -624,21 +648,25 @@ class save_on_cpu(saved_tensors_hooks):
 
 
             if is_first_backward:
+                is_first_backward = False
+                is_first_forward = True
                 self.index_ready = True # we have recorded all tensors
 
                 #end_forward_time = time.perf_counter()
                 #print(f"***** forward took {(end_forward_time - forward_start_time):.3f} seconds")
                 print(f"***** first backward, managing {len(fast_lookup)} tensors")
+                print(f"start of backward {len(self.uvm_cache1)=}, {len(self.uvm_cache2)=}")
                 #print(f"{self.quant} tensors quantized")
                 #tensor_pct = round(self.quant/len(fast_lookup),4)*100
                 #print(f"{tensor_pct}% tensors quantized")
                 #self.quant=0
                 #backward_start_time = time.perf_counter()
-                is_first_backward = False
-                is_first_forward = True
+
 
             # lookup_tensor, next_id, location, side_stream = fast_lookup[unpack_tensor_id]
             maybe_uvm_tensor, tensor_stats, input_dtype = fast_lookup[unpack_tensor_id]
+            del fast_lookup[unpack_tensor_id]
+
 
             if tensor_stats is None:
                 return maybe_uvm_tensor
@@ -655,7 +683,7 @@ class save_on_cpu(saved_tensors_hooks):
             #print(f"unpacked {maybe_uvm_tensor.shape=}, {input_dtype=}, {tensor_stats=}")
             res_tensor = torch.empty_like(maybe_uvm_tensor, dtype=input_dtype, device="cuda")
             res_tensor.copy_(maybe_uvm_tensor, non_blocking=True)
-            torch.cuda.synchronize()
+            #torch.cuda.synchronize()
             return res_tensor# .to(torch.bfloat16)
 
                 #print(f"***** unpacking {unpack_tensor_id=}, {maybe_compressed_tensor.shape=}")
