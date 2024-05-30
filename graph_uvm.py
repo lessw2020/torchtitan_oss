@@ -435,6 +435,7 @@ class save_on_cpu(saved_tensors_hooks):
         self.count =0
         self.uvm_mgr= get_uvm_manager()
         assert self.uvm_mgr is not None, "failed to import uvm_pytorch"
+        self.uvm_cache = defaultdict(list)
 
 
 
@@ -463,8 +464,8 @@ class save_on_cpu(saved_tensors_hooks):
 
                 #forward_start_time = time.perf_counter()
                 torch_null_stream = torch.cuda.current_stream()
-                #print(f"fast lookup size {len(fast_lookup)=}")
-                fast_lookup.clear()
+                print(f"fast lookup size {len(fast_lookup)=}")
+                #fast_lookup.clear()
 
                 print(f"***** first forward")
                 is_first_forward = False
@@ -494,6 +495,16 @@ class save_on_cpu(saved_tensors_hooks):
 
 
             size_id = get_tensor_size_id(input_tensor)
+            cache_id = None
+            # see if we can reuse a cached tensor
+            if len(self.uvm_cache[size_id]):
+                #print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
+                cache_id, uvm_tensor = self.uvm_cache[size_id].pop()
+                # print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
+                uvm_tensor.copy_(input_tensor)
+                return cache_id
+
+
             #if cpu_cache and num_bytes > colossal_tensor_min_bytes and len(tensor_cache[size_id]):
                 #print(f"***** re-using cpu memory {num_bytes=} bytes and size_id = {size_id}")
                 #print(f"{size_id=}, {tensor_cache[size_id]=}")
@@ -579,6 +590,8 @@ class save_on_cpu(saved_tensors_hooks):
             '''
             sizes = input_tensor.size()
             uvm_storage_tensor = self.uvm_mgr.getManagedTensor(num_bytes, sizes)
+            # cache for next time
+            self.uvm_cache[size_id].append((tensor_id, uvm_storage_tensor))
             # params = (uvm_storage_tensor, input_tensor.dtype)
             uvm_storage_tensor.copy_(input_tensor, non_blocking=False)
             fast_lookup[tensor_id] = (uvm_storage_tensor, sizes, input_tensor.dtype)
