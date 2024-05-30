@@ -480,19 +480,18 @@ class save_on_cpu(saved_tensors_hooks):
 
             tensor_dtype = input_tensor.dtype
             num_bytes = _get_num_bytes_tensor(input_tensor)
+            sizes = input_tensor.size()
             if input_tensor.numel() < min_copy_size or (input_tensor.dtype in self.ignore_types):
                 #print(f"skipping {input_tensor.shape=}, {input_tensor.dtype=}")
                 gpu_clone = input_tensor.clone().detach()
                 fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype)  #False = not quantized
                 #prev = tensor_id
-                if not self.index_ready:
-                    self.quant_index.append(False)
+                #if not self.index_ready:
+                #    self.quant_index.append(False)
 
-                self.quant_index
+                #self.quant_index
                 return tensor_id
 
-
-            #cpu_tensor = None
 
             size_id = get_tensor_size_id(input_tensor)
             #if cpu_cache and num_bytes > colossal_tensor_min_bytes and len(tensor_cache[size_id]):
@@ -529,7 +528,7 @@ class save_on_cpu(saved_tensors_hooks):
 
                 #print(f"***** quantizing {input_tensor.shape=}, {input_tensor.dtype=}")
             # compress various ways
-            if not self.index_ready:
+            '''if not self.index_ready:
                 #compressed_tensor, stats_compression = F.quantize_4bit(input_tensor, quant_type="nf4")
                 compressed_tensor, stats_compression = F.quantize_blockwise(input_tensor, blocksize=self.blocksize, code=self.code)
                 #compressed_tensor, stats_compression = F.vectorwise (input_tensor, quant_type="nf4")
@@ -560,11 +559,11 @@ class save_on_cpu(saved_tensors_hooks):
                     self.quant_index.append(False)
                     gpu_clone = input_tensor.clone().detach()
                     fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype)  #False = not quantized
-            '''else:
+            else:
                 #self.quant+=1
                 gpu_clone = input_tensor.clone().detach()
                 fast_lookup[tensor_id] = (gpu_clone, None)  #False = not quantized
-            '''
+
             if self.index_ready:
                 # print(f"{self.quant_index[self.count]=}, {self.count=}")
                 if self.quant_index[self.count] == True:
@@ -577,8 +576,12 @@ class save_on_cpu(saved_tensors_hooks):
                 else:
                     gpu_clone = input_tensor.clone().detach()
                     fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype)  #False = not quantized
-
-
+            '''
+            sizes = input_tensor.size()
+            uvm_storage_tensor = self.uvm_mgr.getManagedTensor(num_bytes, sizes)
+            # params = (uvm_storage_tensor, input_tensor.dtype)
+            uvm_storage_tensor.copy_(input_tensor, non_blocking=False)
+            fast_lookup[tensor_id] = (uvm_storage_tensor, sizes, input_tensor.dtype)
             return tensor_id
 
 
@@ -613,31 +616,34 @@ class save_on_cpu(saved_tensors_hooks):
                 #end_forward_time = time.perf_counter()
                 #print(f"***** forward took {(end_forward_time - forward_start_time):.3f} seconds")
                 print(f"***** first backward, managing {len(fast_lookup)} tensors")
-                print(f"{self.quant} tensors quantized")
-                tensor_pct = round(self.quant/len(fast_lookup),4)*100
-                print(f"{tensor_pct}% tensors quantized")
-                self.quant=0
+                #print(f"{self.quant} tensors quantized")
+                #tensor_pct = round(self.quant/len(fast_lookup),4)*100
+                #print(f"{tensor_pct}% tensors quantized")
+                #self.quant=0
                 #backward_start_time = time.perf_counter()
                 is_first_backward = False
                 is_first_forward = True
 
             # lookup_tensor, next_id, location, side_stream = fast_lookup[unpack_tensor_id]
-            maybe_compressed_tensor, compress_stats, input_dtype = fast_lookup[unpack_tensor_id]
+            maybe_uvm_tensor, tensor_stats, input_dtype = fast_lookup[unpack_tensor_id]
 
-            if compress_stats is None:
-                return maybe_compressed_tensor
+            if tensor_stats is None:
+                return maybe_uvm_tensor
 
             # move to gpu
             #gpu_tensor = maybe_compressed_tensor.to(device="cuda", non_blocking=False)
             #torch.cuda.synchronize()
             #print(f"{compress_stats=}")
             #lookup_tensor = F.dequantize_4bit(maybe_compressed_tensor, compress_stats, quant_type="nf4")
-            lookup_tensor = F.dequantize_blockwise(maybe_compressed_tensor, compress_stats, blocksize=self.blocksize, code=self.code)
+            #lookup_tensor = F.dequantize_blockwise(maybe_compressed_tensor, compress_stats, blocksize=self.blocksize, code=self.code)
             #lookup_tensor = F.vectorwise_dequant(maybe_compressed_tensor, compress_stats)
-            if lookup_tensor.dtype != input_dtype:
-                lookup_tensor = lookup_tensor.to(input_dtype) # .to(torch.bfloat16)
-            #print(f"unpacked {lookup_tensor.shape=}")
-            return lookup_tensor# .to(torch.bfloat16)
+            #if lookup_tensor.dtype != input_dtype:
+            #    lookup_tensor = lookup_tensor.to(input_dtype) # .to(torch.bfloat16)
+            #print(f"unpacked {maybe_uvm_tensor.shape=}, {input_dtype=}, {tensor_stats=}")
+            res_tensor = torch.empty_like(maybe_uvm_tensor, dtype=input_dtype, device="cuda")
+            res_tensor.copy_(maybe_uvm_tensor, non_blocking=True)
+            torch.cuda.synchronize()
+            return res_tensor# .to(torch.bfloat16)
 
                 #print(f"***** unpacking {unpack_tensor_id=}, {maybe_compressed_tensor.shape=}")
             '''# asynch load next tensor
