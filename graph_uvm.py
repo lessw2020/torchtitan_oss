@@ -445,7 +445,7 @@ class save_on_cpu(saved_tensors_hooks):
         self.iter = 0
         self.active_cache = None
         self.storage_cache = None
-        self.prev_tensor = None
+        self.prev_pref_tensor_id = None
         self.prefetch_stack = []
 
 
@@ -512,12 +512,13 @@ class save_on_cpu(saved_tensors_hooks):
                 #print(f"skipping {input_tensor.shape=}, {input_tensor.dtype=}")
                 tensor_id = get_tensor_id()
                 gpu_clone = input_tensor.clone().detach()
-                fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype, self.prev_tensor)  #False = not quantized
+                fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype, self.prev_pref_tensor_id)  #False = not quantized
                 #prev = tensor_id
                 #if not self.index_ready:
                 #    self.quant_index.append(False)
 
                 #self.quant_index
+
                 return tensor_id
 
 
@@ -529,9 +530,10 @@ class save_on_cpu(saved_tensors_hooks):
                     cache_id, uvm_tensor = self.active_cache[size_id].pop()
                     # print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
                     uvm_tensor.copy_(input_tensor, non_blocking=True)
-                    fast_lookup[cache_id] = (uvm_tensor, sizes, input_tensor.dtype, self.prev_tensor)
+                    fast_lookup[cache_id] = (uvm_tensor, sizes, input_tensor.dtype, self.prev_pref_tensor_id)
                     self.storage_cache[size_id].append((cache_id, uvm_tensor))
-                    self.prefetch_stack.append(cache_id)
+                    #self.prefetch_stack.append(cache_id)
+                    self.prev_pref_tensor_id=cache_id
                     return cache_id
 
 
@@ -628,8 +630,9 @@ class save_on_cpu(saved_tensors_hooks):
                 self.storage_cache[size_id].append((tensor_id, uvm_storage_tensor))
             # params = (uvm_storage_tensor, input_tensor.dtype)
             uvm_storage_tensor.copy_(input_tensor, non_blocking=True)
-            fast_lookup[tensor_id] = (uvm_storage_tensor, sizes, input_tensor.dtype, self.prev_tensor)
-            self.prefetch_stack.append(tensor_id)
+            fast_lookup[tensor_id] = (uvm_storage_tensor, sizes, input_tensor.dtype, self.prev_pref_tensor_id)
+            #self.prefetch_stack.append(tensor_id)
+            self.prev_pref_tensor_id=tensor_id
             return tensor_id
 
 
@@ -659,6 +662,7 @@ class save_on_cpu(saved_tensors_hooks):
 
 
             if is_first_backward:
+                self.prev_pref_tensor_id = None
                 is_first_backward = False
                 is_first_forward = True
                 self.index_ready = True # we have recorded all tensors
@@ -676,29 +680,44 @@ class save_on_cpu(saved_tensors_hooks):
 
 
             # lookup_tensor, next_id, location, side_stream = fast_lookup[unpack_tensor_id]
-            maybe_uvm_tensor, tensor_stats, input_dtype, next_tensor = fast_lookup[unpack_tensor_id]
+            maybe_uvm_tensor, tensor_stats, input_dtype, prefetch_id = fast_lookup[unpack_tensor_id]
             del fast_lookup[unpack_tensor_id]
 
-            # prefetch next tensor
-            if len(self.prefetch_stack):
-                prefetch_tensor_id = self.prefetch_stack.pop()
-                if prefetch_tensor_id and prefetch_tensor_id != unpack_tensor_id:
-                    self.uvm_mgr.cuda_prefetch(prefetch_tensor) # cuda_ptr,ct.c_int(num_bytes), ct.c_int(deviceid))
-                    print(f"prefetching {next_tensor=}")
-                else:
-                    # try again if we popped our own id
-                    print(f"popped our own id from prefetch stack")
-                    if len(self.prefetch_stack):
-                        prefetch_tensor_id = self.prefetch_stack.pop()
-                        if prefetch_tensor_id and prefetch_tensor_id != unpack_tensor_id:
+            if prefetch_id:
+                if prefetch_id in fast_lookup:
+                    prefetch_tensor, pref_stats, _, _ = fast_lookup[prefetch_id]
+                    self.uvm_mgr.cuda_prefetch(prefetch_tensor)
+
+
+            '''if len(self.prefetch_stack):
+                    prefetch_tensor_id = self.prefetch_stack.pop()
+                    if prefetch_tensor_id and prefetch_tensor_id != unpack_tensor_id:
+                        try:
+                            prefetch_tensor, pref_tensor_stats, _ = fast_lookup[prefetch_tensor_id]
                             self.uvm_mgr.cuda_prefetch(prefetch_tensor) # cuda_ptr,ct.c_int(num_bytes), ct.c_int(deviceid))
-                            print(f"prefetching {next_tensor=}")
+                            #print(f"prefetching {prefetch_tensor_id=}, {pref_tensor_stats=}")
+                        except KeyError:
+                            print(f"{prefetch_tensor_id=} not found in fast lookup")
 
-
+                    else:
+                        # try again if we popped our own id
+                        print(f"popped our own id from prefetch stack")
+                        if len(self.prefetch_stack):
+                            prefetch_tensor_id = self.prefetch_stack.pop()
+                            if prefetch_tensor_id and prefetch_tensor_id != unpack_tensor_id:
+                                    prefetch_tensor, pref_tensor_stats, _ = fast_lookup[prefetch_tensor_id]
+                                    print(f"prefetching {prefetch_tensor_id=}, {pref_tensor_stats=}")
+                                    self.uvm_mgr.cuda_prefetch(prefetch_tensor) # cuda_ptr,ct.c_int(num_bytes), ct.c_int(deviceid))
+                                    #print(f"prefetching {prefetch_tensor_id=}")
+            '''
 
             if tensor_stats is None:
-                print(f"***** returning {unpack_tensor_id=}, {maybe_uvm_tensor.shape=}")
                 return maybe_uvm_tensor
+            '''    #print(f"***** returning {unpack_tensor_id=}, {maybe_uvm_tensor.shape=}")
+                # prefetch next tensor
+
+            '''
+
 
             # move to gpu
             #gpu_tensor = maybe_compressed_tensor.to(device="cuda", non_blocking=False)
