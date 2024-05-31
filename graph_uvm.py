@@ -358,6 +358,7 @@ def perf_timer(func):
 import time
 import secrets
 import importlib
+import ctypes as ct
 
 _gb = 1024 * 1024 * 1024
 def get_tensor_id()-> str:
@@ -381,6 +382,9 @@ def get_uvm_manager():
         uvm_mgr = importlib.import_module(_uvmlib)
     return uvm_mgr
 
+def _get_paged_void_ptr(x) -> ct.c_void_p:
+    """extract data ptr as void_p from paged tensor"""
+    return ct.c_void_p(x.data.data_ptr())
 
 class save_on_cpu(saved_tensors_hooks):
     """Context manager under which tensors saved by the forward pass will be stored on cpu, then retrieved for backward.
@@ -437,10 +441,12 @@ class save_on_cpu(saved_tensors_hooks):
         assert self.uvm_mgr is not None, "failed to import uvm_pytorch"
         self.uvm_cache1 = defaultdict(list)
         self.uvm_cache2 = defaultdict(list)
-        self.caching = False
+        self.caching = True
         self.iter = 0
         self.active_cache = None
         self.storage_cache = None
+        self.prev_tensor = None
+        self.prefetch_stack = []
 
 
 
@@ -472,13 +478,14 @@ class save_on_cpu(saved_tensors_hooks):
                 print(f"fast lookup size {len(fast_lookup)=}")
                 if not self.caching:
                     fast_lookup.clear()
+                # ensure we start clean each iteration
+                self.prefetch_stack.clear()
 
                 print(f"***** first forward")
                 print(f"{self.iter=}")
                 print(f"{len(self.uvm_cache1)=}, {len(self.uvm_cache2)=}")
                 is_first_forward = False
                 is_first_backward = True
-                prev = None
                 self.count = -1
                 self.iter+=1
 
@@ -499,11 +506,13 @@ class save_on_cpu(saved_tensors_hooks):
             tensor_dtype = input_tensor.dtype
             num_bytes = _get_num_bytes_tensor(input_tensor)
             sizes = input_tensor.size()
+
+            # skipping complex types, small tensors, and tensors with unsupported dtypes
             if input_tensor.numel() < min_copy_size or (input_tensor.dtype in self.ignore_types):
                 #print(f"skipping {input_tensor.shape=}, {input_tensor.dtype=}")
                 tensor_id = get_tensor_id()
                 gpu_clone = input_tensor.clone().detach()
-                fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype)  #False = not quantized
+                fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype, self.prev_tensor)  #False = not quantized
                 #prev = tensor_id
                 #if not self.index_ready:
                 #    self.quant_index.append(False)
@@ -519,9 +528,10 @@ class save_on_cpu(saved_tensors_hooks):
                     #print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
                     cache_id, uvm_tensor = self.active_cache[size_id].pop()
                     # print(f"***** re-using uvm memory {num_bytes=} bytes and size_id = {size_id}")
-                    uvm_tensor.copy_(input_tensor)
-                    fast_lookup[cache_id] = (uvm_tensor, sizes, input_tensor.dtype)
+                    uvm_tensor.copy_(input_tensor, non_blocking=True)
+                    fast_lookup[cache_id] = (uvm_tensor, sizes, input_tensor.dtype, self.prev_tensor)
                     self.storage_cache[size_id].append((cache_id, uvm_tensor))
+                    self.prefetch_stack.append(cache_id)
                     return cache_id
 
 
@@ -608,7 +618,7 @@ class save_on_cpu(saved_tensors_hooks):
                     gpu_clone = input_tensor.clone().detach()
                     fast_lookup[tensor_id] = (gpu_clone, None, input_tensor.dtype)  #False = not quantized
             '''
-            sizes = input_tensor.size()
+            #sizes = input_tensor.size()
             tensor_id = get_tensor_id()
             uvm_storage_tensor = self.uvm_mgr.getManagedTensor(num_bytes, sizes)
             #print(f"created {uvm_storage_tensor.shape=}, {input_tensor.dtype=}")
@@ -617,8 +627,9 @@ class save_on_cpu(saved_tensors_hooks):
                 #print(f"storing {size_id=}")
                 self.storage_cache[size_id].append((tensor_id, uvm_storage_tensor))
             # params = (uvm_storage_tensor, input_tensor.dtype)
-            uvm_storage_tensor.copy_(input_tensor, non_blocking=False)
-            fast_lookup[tensor_id] = (uvm_storage_tensor, sizes, input_tensor.dtype)
+            uvm_storage_tensor.copy_(input_tensor, non_blocking=True)
+            fast_lookup[tensor_id] = (uvm_storage_tensor, sizes, input_tensor.dtype, self.prev_tensor)
+            self.prefetch_stack.append(tensor_id)
             return tensor_id
 
 
@@ -644,7 +655,7 @@ class save_on_cpu(saved_tensors_hooks):
             nonlocal torch_null_stream
             nonlocal backward_start_time
 
-            from bitsandbytes import functional as F
+            # from bitsandbytes import functional as F
 
 
             if is_first_backward:
@@ -655,6 +666,7 @@ class save_on_cpu(saved_tensors_hooks):
                 #end_forward_time = time.perf_counter()
                 #print(f"***** forward took {(end_forward_time - forward_start_time):.3f} seconds")
                 print(f"***** first backward, managing {len(fast_lookup)} tensors")
+                print(f"{len(self.prefetch_stack)=}")
                 print(f"start of backward {len(self.uvm_cache1)=}, {len(self.uvm_cache2)=}")
                 #print(f"{self.quant} tensors quantized")
                 #tensor_pct = round(self.quant/len(fast_lookup),4)*100
@@ -664,11 +676,28 @@ class save_on_cpu(saved_tensors_hooks):
 
 
             # lookup_tensor, next_id, location, side_stream = fast_lookup[unpack_tensor_id]
-            maybe_uvm_tensor, tensor_stats, input_dtype = fast_lookup[unpack_tensor_id]
+            maybe_uvm_tensor, tensor_stats, input_dtype, next_tensor = fast_lookup[unpack_tensor_id]
             del fast_lookup[unpack_tensor_id]
+
+            # prefetch next tensor
+            if len(self.prefetch_stack):
+                prefetch_tensor_id = self.prefetch_stack.pop()
+                if prefetch_tensor_id and prefetch_tensor_id != unpack_tensor_id:
+                    self.uvm_mgr.cuda_prefetch(prefetch_tensor) # cuda_ptr,ct.c_int(num_bytes), ct.c_int(deviceid))
+                    print(f"prefetching {next_tensor=}")
+                else:
+                    # try again if we popped our own id
+                    print(f"popped our own id from prefetch stack")
+                    if len(self.prefetch_stack):
+                        prefetch_tensor_id = self.prefetch_stack.pop()
+                        if prefetch_tensor_id and prefetch_tensor_id != unpack_tensor_id:
+                            self.uvm_mgr.cuda_prefetch(prefetch_tensor) # cuda_ptr,ct.c_int(num_bytes), ct.c_int(deviceid))
+                            print(f"prefetching {next_tensor=}")
+
 
 
             if tensor_stats is None:
+                print(f"***** returning {unpack_tensor_id=}, {maybe_uvm_tensor.shape=}")
                 return maybe_uvm_tensor
 
             # move to gpu
@@ -681,7 +710,7 @@ class save_on_cpu(saved_tensors_hooks):
             #if lookup_tensor.dtype != input_dtype:
             #    lookup_tensor = lookup_tensor.to(input_dtype) # .to(torch.bfloat16)
             #print(f"unpacked {maybe_uvm_tensor.shape=}, {input_dtype=}, {tensor_stats=}")
-            res_tensor = torch.empty_like(maybe_uvm_tensor, dtype=input_dtype, device="cuda")
+            res_tensor = torch.empty_like(maybe_uvm_tensor, dtype=input_dtype, device="cuda:0")
             res_tensor.copy_(maybe_uvm_tensor, non_blocking=True)
             #torch.cuda.synchronize()
             return res_tensor# .to(torch.bfloat16)

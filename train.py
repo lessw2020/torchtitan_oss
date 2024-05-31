@@ -103,9 +103,12 @@ def build_optimizer(model, job_config: JobConfig):
     return optimizer
 
 
+
 # Enable debug tracing on failure: https://pytorch.org/docs/stable/elastic/errors.html
 @record
 def main(job_config: JobConfig):
+    # Restrict memory
+    torch.cuda.set_per_process_memory_fraction(0.25)
     init_logger()
     logger.info(f"Starting job: {job_config.job.description}")
 
