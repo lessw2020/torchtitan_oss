@@ -1,6 +1,9 @@
 from torch.optim.optimizer import Optimizer
 import torch
 import torch.nn as nn
+from typing import Any, Dict, List, Optional, Tuple
+import torch.distributed as dist
+import os
 
 class LionW(Optimizer):
     """
@@ -24,7 +27,7 @@ class LionW(Optimizer):
         self._update_total_dot_prod: Optional[torch.Tensor] = None
         self._update_total_norm: Optional[torch.Tensor] = None
         self._signed_update_total_norm: Optional[torch.Tensor] = None
-        self._device: Optional[torch.device] = device
+        self._device: Optional[torch.device] = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}")
 
     def get_post_step_metrics(
         self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None

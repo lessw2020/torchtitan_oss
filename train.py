@@ -50,7 +50,7 @@ from torchtitan.utils import (
     NoColor,
     set_pg_timeouts,
 )
-
+from torchtitan.models.lionw import LionW
 
 @dataclass
 class TrainState(Stateful):
@@ -102,9 +102,15 @@ def build_optimizer(model, job_config: JobConfig):
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1, foreach=True
         )
+    elif name == "LionW":
+        optimizer = LionW(
+            model.parameters(), lr=lr, betas=(0.9, 0.99), weight_decay=0.1,
+        )
+
+
     else:
         raise NotImplementedError(f"Optimizer {name} not added.")
-
+    logger.info(f"==> Running Optimizer {name} with lr={lr}")
     return optimizer
 
 
