@@ -1,3 +1,7 @@
+from torch.optim.optimizer import Optimizer
+import torch
+import torch.nn as nn
+
 class LionW(Optimizer):
     """
     Adapted from https://github.com/google/automl/blob/master/lion/lion_pytorch.py
