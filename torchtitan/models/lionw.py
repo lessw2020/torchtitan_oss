@@ -12,7 +12,7 @@ class LionW(Optimizer):
         params,
         lr: float = 1e-4,
         betas: Tuple[float, float] = (0.9, 0.99),
-        weight_decay: float = 0.0,
+        weight_decay: float = 0.1,
         device: Optional[torch.device] = None,
     ):
         assert lr > 0.0
