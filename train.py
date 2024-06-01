@@ -108,7 +108,7 @@ def build_optimizer(model, job_config: JobConfig):
 @record
 def main(job_config: JobConfig):
     # Restrict memory
-    torch.cuda.set_per_process_memory_fraction(0.25)
+    torch.cuda.set_per_process_memory_fraction(0.3)
     init_logger()
     logger.info(f"Starting job: {job_config.job.description}")
 
@@ -278,8 +278,8 @@ def main(job_config: JobConfig):
 
     logger.info(f"Training starts at step {train_state.step + 1}")
     import actnn.cpp_extension.quantization as ext_quantization
-    with torch.autograd.graph.save_on_cpu():
-    #with contextlib.nullcontext():
+    #with torch.autograd.graph.save_on_cpu2():
+    with contextlib.nullcontext():
         with maybe_enable_profiling(
             job_config, global_step=train_state.step
         ) as torch_profiler:
