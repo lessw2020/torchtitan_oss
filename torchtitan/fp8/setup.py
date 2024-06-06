@@ -14,11 +14,11 @@ extra_compile_args = dict(cxx=['-fopenmp', '-O3'], nvcc=['-O3'])
 define_macros.append(('WITH_CUDA', None))
 
 setup(
-    name='msamp_adamw',
-    version='0.0.1',
+    name='fp8adamw',
+    version='6.0.1',
     ext_modules=[
         ext_t(
-            'msamp_adamw',
+            'fp8_adamw',
             ext_fnames,
             define_macros=define_macros,
             extra_compile_args=extra_compile_args,

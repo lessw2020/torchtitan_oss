@@ -9,8 +9,8 @@
 #include <cmath>
 #include <type_traits>
 
-#include "../common/include/common.h"
-#include "../common/include/utils.cuh"
+#include "./common.h"
+#include "./utils.cuh"
 
 using namespace std;
 using namespace torch;
