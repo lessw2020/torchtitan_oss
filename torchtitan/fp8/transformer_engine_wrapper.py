@@ -11,8 +11,6 @@ import transformer_engine as te    # noqa: F401 # pylint:disable=unused-import
 import transformer_engine_extensions as tex
 
 from dtypes import QType
-from scaling_tensor import ScalingTensors
-from meta_tensor import ScalingMeta
 
 
 class PaddingTensor:
@@ -138,8 +136,9 @@ class TransformerEngineWrapper:
         return tex.cast_from_fp8(input, scale_inv, itype, otype)
 
     @staticmethod
+     
     def fp8_fused_cast_transpose(input: torch.Tensor, qtype: QType,
-                                 meta: ScalingMeta) -> Tuple[torch.Tensor, torch.Tensor]:
+                                 meta ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Fused cast and transpose for input tensor.
 
         Args:
@@ -150,6 +149,8 @@ class TransformerEngineWrapper:
         Returns:
             torch.Tensor, torch.Tensor: casted and transposed tensors.
         """
+        from fp8.tensors import ScalingTensors, ScalingMeta 
+
         with PaddingTensor(input) as pad_input:
             out_cast = torch.empty_like(pad_input.val, dtype=torch.uint8)
             out_t = torch.empty(out_cast.shape[1], out_cast.shape[0], device='cuda', dtype=torch.uint8)
@@ -163,7 +164,7 @@ class TransformerEngineWrapper:
         return out_cast, out_t
 
     @staticmethod
-    def fp8_transpose(input: ScalingTensor) -> ScalingTensor:
+    def fp8_transpose(input): #  ScalingTensor) -> ScalingTensor:
         """Transpose the input tensor.
 
         Args:
@@ -172,6 +173,8 @@ class TransformerEngineWrapper:
         Returns:
             ScalingTensor: transposed scaling tensor.
         """
+        from fp8.tensors import ScalingTensors, ScalingMeta 
+
         with PaddingTensor(input.value, transpose=True) as pad_input:
             pad_input.val = tex.fp8_transpose(pad_input.val, TransformerEngineWrapper._to_te_dtype(input.meta.qtype))
         return ScalingTensor(pad_input.val.contiguous(), input.meta)

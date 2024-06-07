@@ -12,9 +12,7 @@ import torch
 from torch.optim.optimizer import Optimizer, required
 
 from floating import Floating
-from meta_tensor import ScalingMeta
-from scaling_tensor import ScalingTensor
-from msamp.common.tensor import TensorDist
+from fp8.tensors import ScalingMeta, ScalingTensor, TensorDist
 from parameter import ScalingParameter
 from state import model_state 
 
