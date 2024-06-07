@@ -15,7 +15,8 @@ from floating import Floating
 from meta_tensor import ScalingMeta
 from scaling_tensor import ScalingTensor
 from msamp.common.tensor import TensorDist
-from msamp.nn import model_state, ScalingParameter
+from parameter import ScalingParameter
+from    import model_state 
 
 
 class LBOptimizer(Optimizer):
