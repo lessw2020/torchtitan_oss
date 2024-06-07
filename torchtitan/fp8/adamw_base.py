@@ -9,9 +9,10 @@ from typing import List, Union
 import torch
 from torch import Tensor
 
-from msamp.common.dtype import Dtypes
-from msamp.common.tensor import ScalingTensor
-from msamp.optim import LBOptimizer
+
+from dtypes import Dtypes
+from scaling_tensor import ScalingTensor
+from optimizer import LBOptimizer
 
 
 class LBAdamWBase(LBOptimizer):
