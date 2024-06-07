@@ -11,8 +11,9 @@ import warnings
 import torch
 from torch.optim.optimizer import Optimizer, required
 
-from dtypes import Floating
-from meta_tensor import ScalingTensor, ScalingMeta
+from floating import Floating
+from meta_tensor import ScalingMeta
+from scaling_tensor import ScalingTensor
 from msamp.common.tensor import TensorDist
 from msamp.nn import model_state, ScalingParameter
 

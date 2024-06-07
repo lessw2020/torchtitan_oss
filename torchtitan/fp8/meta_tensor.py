@@ -7,7 +7,8 @@
 import copy
 import torch
 
-from dtypes import Floating, Dtypes
+from dtypes import Dtypes
+from floating import Floating
 
 
 class ScalingMeta:

@@ -5,9 +5,9 @@
 
 import torch
 import torch.nn.functional as F
-from msamp.common.tensor import ScalingMeta
-from msamp.common.tensor import HookManager
-from msamp.common.dtype import Dtypes
+from meta_tensor import ScalingMeta
+from hooks import HookManager
+from dtypes import Dtypes
 from msamp.common.tensor import TypeCast
 from msamp.common.utils import TransformerEngineWrapper
 
