@@ -16,7 +16,7 @@ from meta_tensor import ScalingMeta
 from scaling_tensor import ScalingTensor
 from msamp.common.tensor import TensorDist
 from parameter import ScalingParameter
-from    import model_state 
+from state import model_state 
 
 
 class LBOptimizer(Optimizer):

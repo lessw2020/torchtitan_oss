@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from meta_tensor import ScalingMeta
 from hooks import HookManager
 from dtypes import Dtypes
-from msamp.common.tensor import TypeCast
+from cast import TypeCast
 from msamp.common.utils import TransformerEngineWrapper
 
 
