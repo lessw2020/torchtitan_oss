@@ -25,7 +25,7 @@ def random():
 _size = 20000
 _total_iters = 4
 
-class TestAdamw4Bit_Optimizer:
+class TestAdamwFP8_Optimizer:
     def _test_basics(self, model, model_clone):
         # Test non-default options
         betas = (0.8, 0.88)
@@ -36,7 +36,7 @@ class TestAdamw4Bit_Optimizer:
         adam_opt = torch_optim.AdamW(
             model_clone.parameters(),lr=lr, betas=betas, weight_decay=weight_decay, eps=eps,
         )
-        fourbit_adamw_opt = AdamWFused_QuantFour(
+        fourbit_adamw_opt = FP8AdamW(
             model.parameters(),
             lr=lr,
             betas=betas,
@@ -72,7 +72,7 @@ class TestAdamw4Bit_Optimizer:
             print(f"verifying params at step {i}")
             for p1, p2 in zip(model.parameters(), model_clone.parameters()):
                 assert_expected(p1, p2, atol=.02500, rtol=1e-5)
-            print(f"quantfour approx matches adamw in step {i}")
+            print(f"quantFP8 approx matches adamw in step {i}")
 
 
 
