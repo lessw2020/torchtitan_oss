@@ -12,7 +12,7 @@ import torch
 from torch.optim.optimizer import Optimizer, required
 
 from floating import Floating
-from fp8.tensors import ScalingMeta, ScalingTensor, TensorDist
+from fp8.tensors import ScalingMeta, ScalingTensor # , TensorDist
 from parameter import ScalingParameter
 from state import model_state 
 
@@ -48,8 +48,8 @@ class LBOptimizer(Optimizer):
             return
         scaling_params = [p for p in model.parameters() if isinstance(p, ScalingParameter)]
         grads = [p.grad for p in scaling_params if p.grad is not None]
-        TensorDist.all_reduce_avg(grads)
-
+        #TensorDist.all_reduce_avg(grads)
+ 
     def lb_step(self, closure=None):
         """Performs a single optimization step. The subclass needs to implement this method.
 
