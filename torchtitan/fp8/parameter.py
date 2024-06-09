@@ -3,7 +3,7 @@
 
 """MS-AMP parameter module."""
 
-from scaling_tensor import ScalingTensor
+from fp8.tensors import ScalingTensor
 
 
 class ScalingParameter(ScalingTensor):
