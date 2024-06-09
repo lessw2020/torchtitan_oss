@@ -10,9 +10,10 @@ import torch
 from torch import Tensor
 import torch.distributed as dist
 
-from optimizer import LBAdamWBase
-from meta_tensor import ScalingMeta, ScalingTensor
-from dtypes import Floating, Dtypes
+from adamw_base import LBAdamWBase
+from fp8.tensors import ScalingMeta, ScalingTensor
+from floating import Floating
+from dtypes import Dtypes
 import fp8_adamw
 
 
