@@ -11,7 +11,7 @@ from torch import Tensor
 
 
 from dtypes import Dtypes
-from scaling_tensor import ScalingTensor
+from fp8.tensors import ScalingTensor
 from optimizer import LBOptimizer
 
 
