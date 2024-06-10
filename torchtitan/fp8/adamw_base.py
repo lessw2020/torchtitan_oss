@@ -10,9 +10,9 @@ import torch
 from torch import Tensor
 
 
-from dtypes import Dtypes
-from fp8.tensors import ScalingTensor
-from optimizer import LBOptimizer
+from torchtitan.fp8.dtypes import Dtypes
+from torchtitan.fp8.tensors import ScalingTensor
+from torchtitan.fp8.optimizer import LBOptimizer
 
 
 class LBAdamWBase(LBOptimizer):

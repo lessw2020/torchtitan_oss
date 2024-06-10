@@ -6,14 +6,14 @@ description = "Llama 3 debug training"
 use_for_integration_test = true
 
 [profiling]
-enable_profiling = true
+enable_profiling = false
 save_traces_folder = "profile_trace"
 profile_freq = 10
 
 [metrics]
 log_freq = 1
 enable_color_printing = true
-enable_tensorboard = true
+enable_tensorboard = false
 save_tb_folder = "tb"
 
 [model]
@@ -24,7 +24,7 @@ norm_type = "fused_rmsnorm"  # layernorm / np_layernorm / rmsnorm / fused_rmsnor
 tokenizer_path = "./test/assets/test_tiktoken.model"
 
 [optimizer]
-name = "AdamW"
+name = "FP8AdamW" # AdamW
 lr = 8e-4
 
 [training]
@@ -33,7 +33,7 @@ seq_len = 2048
 warmup_steps = 2  # lr scheduler warm up, normally 20% of the train steps
 max_norm = 1.0  # grad norm clipping
 steps = 10
-data_parallel_degree = -1
+data_parallel_degree = 1
 tensor_parallel_degree = 1
 fp8_linear = ""
 compile = false

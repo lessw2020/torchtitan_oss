@@ -11,10 +11,10 @@ import warnings
 import torch
 from torch.optim.optimizer import Optimizer, required
 
-from floating import Floating
-from fp8.tensors import ScalingMeta, ScalingTensor # , TensorDist
-from parameter import ScalingParameter
-from state import model_state 
+from torchtitan.fp8.floating import Floating
+from torchtitan.fp8.tensors import ScalingMeta, ScalingTensor # , TensorDist
+from torchtitan.fp8.parameter import ScalingParameter
+from torchtitan.fp8.state import model_state 
 
 
 class LBOptimizer(Optimizer):

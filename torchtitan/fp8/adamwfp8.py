@@ -10,10 +10,10 @@ import torch
 from torch import Tensor
 import torch.distributed as dist
 
-from adamw_base import LBAdamWBase
-from fp8.tensors import ScalingMeta, ScalingTensor
-from floating import Floating
-from dtypes import Dtypes
+from torchtitan.fp8.adamw_base import LBAdamWBase
+from torchtitan.fp8.tensors import ScalingMeta, ScalingTensor
+from torchtitan.fp8.floating import Floating
+from torchtitan.fp8.dtypes import Dtypes
 import fp8_adamw
 
 

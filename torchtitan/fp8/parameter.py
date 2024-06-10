@@ -3,7 +3,7 @@
 
 """MS-AMP parameter module."""
 
-from fp8.tensors import ScalingTensor
+from torchtitan.fp8.tensors import ScalingTensor
 
 
 class ScalingParameter(ScalingTensor):

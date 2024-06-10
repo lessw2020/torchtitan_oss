@@ -6,7 +6,7 @@
 import torch
 import numpy as np
 
-from dtypes import Dtypes
+from torchtitan.fp8.dtypes import Dtypes
 
 
 class Floating:

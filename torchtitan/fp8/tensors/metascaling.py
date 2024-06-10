@@ -7,8 +7,8 @@
 import copy
 import torch
 
-from dtypes import Dtypes
-from floating import Floating
+from torchtitan.fp8.dtypes import Dtypes
+from torchtitan.fp8.floating import Floating
 
 
 class ScalingMeta:

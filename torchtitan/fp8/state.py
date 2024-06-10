@@ -6,7 +6,7 @@
 from collections import OrderedDict
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 
-from dtypes import Dtypes
+from torchtitan.fp8.dtypes import Dtypes
 
 
 class ModelState:

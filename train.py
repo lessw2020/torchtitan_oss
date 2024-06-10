@@ -52,6 +52,7 @@ from torchtitan.utils import (
     set_pg_timeouts,
 )
 
+from torchtitan.fp8.adamwfp8 import FP8AdamW
 
 @dataclass
 class TrainState(Stateful):
@@ -103,6 +104,11 @@ def build_optimizer(model, job_config: JobConfig):
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1, foreach=True
         )
+    elif name == "FP8AdamW":
+        optimizer = FP8AdamW(
+            model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1, 
+        )
+        logger.info(f"** FP8AdamW ** optimizer with {lr=}, {name=}")
     else:
         raise NotImplementedError(f"Optimizer {name} not added.")
 

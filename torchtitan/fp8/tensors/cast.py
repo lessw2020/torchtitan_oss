@@ -6,9 +6,9 @@
 import torch
 import torch.distributed as dist
 
-from dtypes import Dtypes
-from dist_utils import DistUtil
-from transformer_engine_wrapper import TransformerEngineWrapper
+from torchtitan.fp8.dtypes import Dtypes
+from torchtitan.fp8.dist_utils import DistUtil
+from torchtitan.fp8.transformer_engine_wrapper import TransformerEngineWrapper
 
 
 class TypeCast:

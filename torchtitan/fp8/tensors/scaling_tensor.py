@@ -5,9 +5,9 @@
 
 import torch
 import torch.nn.functional as F
-from fp8.tensors import ScalingMeta, HookManager, TypeCast
-from dtypes import Dtypes
-from transformer_engine_wrapper import TransformerEngineWrapper
+from torchtitan.fp8.tensors import ScalingMeta, HookManager, TypeCast
+from torchtitan.fp8.dtypes import Dtypes
+from torchtitan.fp8.transformer_engine_wrapper import TransformerEngineWrapper
 
 
 class ScalingTensor:

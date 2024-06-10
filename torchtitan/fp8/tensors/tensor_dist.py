@@ -6,9 +6,9 @@
 import torch.distributed as dist
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 
-from dtypes import Dtypes
+from torchtitan.fp8.dtypes import Dtypes
 from dist_utils import DistUtil
-from fp8.hooks import ScalingTensor
+from torchtitan.fp8.tensors import ScalingTensor
 from msamp.operators.dist_op import DistOp
 
 
