@@ -277,9 +277,9 @@ def main(job_config: JobConfig):
 
 
     logger.info(f"Training starts at step {train_state.step + 1}")
-    import actnn.cpp_extension.quantization as ext_quantization
-    #with torch.autograd.graph.save_on_cpu2():
-    with contextlib.nullcontext():
+    #import actnn.cpp_extension.quantization as ext_quantization
+    with torch.autograd.graph.save_on_cpu():
+    #with contextlib.nullcontext():
         with maybe_enable_profiling(
             job_config, global_step=train_state.step
         ) as torch_profiler:

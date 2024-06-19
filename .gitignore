@@ -16,3 +16,4 @@ error.json
 stderr.log
 stdout.log
 _remote_module_non_scriptable.py
+*.pt
