@@ -52,6 +52,8 @@ from torchtitan.utils import (
     set_pg_timeouts,
 )
 
+from adam_mini import Adam_mini
+from adalomo import AdaLomo
 
 @dataclass
 class TrainState(Stateful):
@@ -90,15 +92,15 @@ class TrainState(Stateful):
         self.log_steps = torch.load(state_dict["log_steps"], weights_only=False)
 
 
-def build_optimizers(model_parts, job_config: JobConfig):
+def build_optimizers(model_parts, job_config: JobConfig, world_mesh=None):
     """Wrap one optimizer per model part in an OptimizersContainer which provides a single
     step() and zero_grad() method for all the child optimizers.
     """
 
-    def _build_optimizer(model):
+    def _build_optimizer(model, world_mesh=None):
         name = job_config.optimizer.name
         lr = job_config.optimizer.lr
-        fused = job_config.optimizer.fused
+        fused = False # job_config.optimizer.fused
 
         # Common parameters for both optimizers
         optimizer_kwargs = {
@@ -113,6 +115,21 @@ def build_optimizers(model_parts, job_config: JobConfig):
             optimizer = torch.optim.Adam(model.parameters(), **optimizer_kwargs)
         elif name == "AdamW":
             optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
+        elif name == "adam_mini":
+            optimizer = Adam_mini(model, lr=lr, 
+            beta1=0.9, beta2=0.95, 
+            weight_decay=0.1, 
+            model_sharding=True,
+            n_embd=128256,
+            n_head=32,
+            n_query_groups=4,
+            mesh = world_mesh,
+            )
+            print(f"======>>>>> Using Adam_mini optimizer")
+        elif name == "adalomo":
+            optimizer = AdaLomo(model, lr=lr)
+            print(f"======>>>>> Using AdaLomo optimizer")
+
         else:
             raise NotImplementedError(f"Optimizer {name} not added.")
 
@@ -127,6 +144,7 @@ def build_optimizers(model_parts, job_config: JobConfig):
         def step(self):
             for optimizer in self.optimizers:
                 optimizer.step()
+            #pass
 
         def zero_grad(self):
             for optimizer in self.optimizers:
@@ -274,7 +292,7 @@ def main(job_config: JobConfig):
     )
 
     # build optimizer after applying parallelisms to the model
-    optimizers = build_optimizers(model_parts, job_config)
+    optimizers = build_optimizers(model_parts, job_config, world_mesh=dp_mesh)
     lr_schedulers = get_lr_schedulers(optimizers.optimizers, job_config)
 
     metric_logger = build_metric_logger(
