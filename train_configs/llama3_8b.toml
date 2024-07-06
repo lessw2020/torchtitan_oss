@@ -23,7 +23,7 @@ norm_type = "fused_rmsnorm"  # [layernorm / np_layernorm / rmsnorm / fused_rmsno
 tokenizer_path = "./torchtitan/datasets/tokenizer/original/tokenizer.model"
 
 [optimizer]
-name = "adam_mini" # "AdamW" #  #
+name = "micro_adam" # "adam_mini" # "AdamW" #  #
 lr = 3e-4
 
 [training]

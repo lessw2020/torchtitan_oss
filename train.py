@@ -129,6 +129,16 @@ def build_optimizers(model_parts, job_config: JobConfig, world_mesh=None):
         elif name == "adalomo":
             optimizer = AdaLomo(model, lr=lr)
             print(f"======>>>>> Using AdaLomo optimizer")
+        elif name == "micro_adam":
+            from ista_daslab_optimizers import MicroAdam
+
+            optimizer = torch.optim.Adam(model.parameters(), 
+             m=10, # sliding window size (number of gradients)
+            lr=lr, # change accordingly
+            quant_block_size=32000, # 32 or 64 also works
+            k_init=0.01, # float between 0 and 1 meaning percentage: 0.01 means 1%)
+            )
+            print(f"======>>>>> Using micro_adam optimizer")
 
         else:
             raise NotImplementedError(f"Optimizer {name} not added.")
