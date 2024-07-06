@@ -117,13 +117,12 @@ def build_optimizers(model_parts, job_config: JobConfig, world_mesh=None):
             optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
         elif name == "adam_mini":
             optimizer = Adam_mini(model, lr=lr, 
-            beta1=0.9, beta2=0.95, 
+            betas=(0.9, 0.95), 
             weight_decay=0.1, 
             model_sharding=True,
-            n_embd=128256,
+            n_embd=4096,
             n_head=32,
             n_query_groups=4,
-            mesh = world_mesh,
             )
             print(f"======>>>>> Using Adam_mini optimizer")
         elif name == "adalomo":
