@@ -47,6 +47,14 @@ class Adam_mini(Optimizer):
             print("=====>>> Adam-mini is using model_sharding")
         optim_groups = []
 
+        # specific layers, including fused_rmsnorm, are incompatible and are run using normal adamW updates
+        self.exclude_layers = {
+            "embed_tokens", "wte", "lm_head", "tok_embeddings", "output.weight", "norm"
+        }
+
+
+    if p.grad is None:
+
         count_embd = 0
         count_output = 0
         count_qk = 0
@@ -130,8 +138,8 @@ class Adam_mini(Optimizer):
 
                 for p in group["params"]:
                     state = self.state[p]
-                    if (
-                            "embed_tokens" in name or "wte" in name or "lm_head" in name or "tok_embeddings" in name or "output.weight" in name):
+                    # handle excluded layer types via adamw updates
+                    if any(layer in name for layer in self.exclude_layers):
                         if p.grad is None:
                             continue
                         if len(state) == 0:
