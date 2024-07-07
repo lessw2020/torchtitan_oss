@@ -49,11 +49,8 @@ class Adam_mini(Optimizer):
 
         # specific layers, including fused_rmsnorm, are incompatible and are run using normal adamW updates
         self.exclude_layers = {
-            "embed_tokens", "wte", "lm_head", "tok_embeddings", "output.weight", "norm"
+            "embed_tokens", "wte", "lm_head", "tok_embeddings", "output.weight", # "norm"
         }
-
-
-    if p.grad is None:
 
         count_embd = 0
         count_output = 0
