@@ -53,6 +53,7 @@ from torchtitan.utils import (
 )
 
 
+
 @dataclass
 class TrainState(Stateful):
     step: int = 0
@@ -337,157 +338,159 @@ def main(job_config: JobConfig):
 
     # train loop
     logger.info(f"Training starts at step {train_state.step + 1}")
-    with maybe_enable_profiling(
-        job_config, global_step=train_state.step
-    ) as torch_profiler, maybe_enable_memory_snapshot(
-        job_config, global_step=train_state.step
-    ) as memory_profiler:
-        while train_state.step < job_config.training.steps:
-            train_state.step += 1
-            if train_state.step > 1 and train_state.step % _gc_freq == 0:
-                gc.collect(1)
+    with torch.autograd.graph.manage_activations():
+    #with contextlib.nullcontext():
+        with maybe_enable_profiling(
+            job_config, global_step=train_state.step
+        ) as torch_profiler, maybe_enable_memory_snapshot(
+            job_config, global_step=train_state.step
+        ) as memory_profiler:
+            while train_state.step < job_config.training.steps:
+                train_state.step += 1
+                if train_state.step > 1 and train_state.step % _gc_freq == 0:
+                    gc.collect(1)
 
-            # get batch
-            data_load_start = timer()
-            batch = next(data_iterator)
-            input_ids, labels = batch
-            ntokens_since_last_log += labels.numel()
-            data_loading_times.append(timer() - data_load_start)
+                # get batch
+                data_load_start = timer()
+                batch = next(data_iterator)
+                input_ids, labels = batch
+                ntokens_since_last_log += labels.numel()
+                data_loading_times.append(timer() - data_load_start)
 
-            input_ids = input_ids.cuda()
-            labels = labels.cuda()
-            optimizers.zero_grad()
+                input_ids = input_ids.cuda()
+                labels = labels.cuda()
+                optimizers.zero_grad()
 
-            if parallel_dims.pp_enabled:
-                # pipeline parallel forward / backward inside step() call
-                is_last_stage = pp_mesh.get_local_rank() == pp_mesh.size() - 1
+                if parallel_dims.pp_enabled:
+                    # pipeline parallel forward / backward inside step() call
+                    is_last_stage = pp_mesh.get_local_rank() == pp_mesh.size() - 1
 
-                with loss_parallel_ctx():
-                    if pp_mesh.get_local_rank() == 0:
-                        pp_schedule.step(input_ids)
-                    elif is_last_stage:
-                        losses = []
-                        pp_schedule.step(target=labels, losses=losses)
-                    else:
-                        pp_schedule.step()
+                    with loss_parallel_ctx():
+                        if pp_mesh.get_local_rank() == 0:
+                            pp_schedule.step(input_ids)
+                        elif is_last_stage:
+                            losses = []
+                            pp_schedule.step(target=labels, losses=losses)
+                        else:
+                            pp_schedule.step()
 
-                # accumulate losses across pipeline microbatches
-                loss = (
-                    torch.mean(torch.stack(losses))
-                    if is_last_stage
-                    else torch.Tensor([-1.0])
-                )
-            else:
-                # Non-PP forward / backward
-                with loss_parallel_ctx():
-                    pred = model(input_ids)
-                    loss = loss_fn(pred, labels)
-                    # pred.shape=(bs, seq_len, vocab_size)
-                    # need to free to before bwd to avoid peaking memory
-                    del pred
-                    loss.backward()
-
-            # clip gradients
-            for model in model_parts:
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), job_config.training.max_norm, foreach=True
-                )
-
-            # optimizer step
-            checkpoint.wait_for_staging()
-            optimizers.step()
-            lr_schedulers.step()
-
-            losses_since_last_log.append(loss)
-
-            # log metrics
-            if (
-                train_state.step == 1
-                or train_state.step % job_config.metrics.log_freq == 0
-            ):
-                losses = [loss.item() for loss in losses_since_last_log]
-                avg_loss, max_loss = (
-                    np.mean(losses),
-                    np.max(losses),
-                )
-                if parallel_dims.dp_enabled:
-                    global_avg_loss, global_max_loss = (
-                        dist_mean(avg_loss, dp_mesh).item(),
-                        dist_max(max_loss, dp_mesh).item(),
+                    # accumulate losses across pipeline microbatches
+                    loss = (
+                        torch.mean(torch.stack(losses))
+                        if is_last_stage
+                        else torch.Tensor([-1.0])
                     )
                 else:
-                    global_avg_loss, global_max_loss = avg_loss, max_loss
+                    # Non-PP forward / backward
+                    with loss_parallel_ctx():
+                        pred = model(input_ids)
+                        loss = loss_fn(pred, labels)
+                        # pred.shape=(bs, seq_len, vocab_size)
+                        # need to free to before bwd to avoid peaking memory
+                        del pred
+                        loss.backward()
 
-                train_state.log_steps.append(train_state.step)
-                train_state.global_avg_losses.append(global_avg_loss)
-                train_state.global_max_losses.append(global_max_loss)
+                # clip gradients
+                for model in model_parts:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), job_config.training.max_norm, foreach=True
+                    )
 
-                time_delta = timer() - time_last_log
+                # optimizer step
+                checkpoint.wait_for_staging()
+                optimizers.step()
+                lr_schedulers.step()
 
-                # tokens per second, abbr. as wps by convention
-                wps = ntokens_since_last_log / (
-                    time_delta * parallel_dims.model_parallel_size
+                losses_since_last_log.append(loss)
+
+                # log metrics
+                if (
+                    train_state.step == 1
+                    or train_state.step % job_config.metrics.log_freq == 0
+                ):
+                    losses = [loss.item() for loss in losses_since_last_log]
+                    avg_loss, max_loss = (
+                        np.mean(losses),
+                        np.max(losses),
+                    )
+                    if parallel_dims.dp_enabled:
+                        global_avg_loss, global_max_loss = (
+                            dist_mean(avg_loss, dp_mesh).item(),
+                            dist_max(max_loss, dp_mesh).item(),
+                        )
+                    else:
+                        global_avg_loss, global_max_loss = avg_loss, max_loss
+
+                    train_state.log_steps.append(train_state.step)
+                    train_state.global_avg_losses.append(global_avg_loss)
+                    train_state.global_max_losses.append(global_max_loss)
+
+                    time_delta = timer() - time_last_log
+
+                    # tokens per second, abbr. as wps by convention
+                    wps = ntokens_since_last_log / (
+                        time_delta * parallel_dims.model_parallel_size
+                    )
+                    # model FLOPS utilization
+                    # For its definition and calculation, please refer to the PaLM paper:
+                    # https://arxiv.org/abs/2204.02311
+                    mfu = 100 * num_flop_per_token * wps / gpu_peak_flops
+
+                    time_end_to_end = time_delta / job_config.metrics.log_freq
+                    time_data_loading = np.mean(data_loading_times)
+                    time_data_loading_pct = 100 * np.sum(data_loading_times) / time_delta
+
+                    gpu_mem_stats = gpu_memory_monitor.get_peak_stats()
+
+                    metrics = {
+                        "loss_metrics/global_avg_loss": global_avg_loss,
+                        "loss_metrics/global_max_loss": global_max_loss,
+                        "wps": wps,
+                        "mfu(%)": mfu,
+                        "time_metrics/end_to_end(s)": time_end_to_end,
+                        "time_metrics/data_loading(s)": time_data_loading,
+                        "time_metrics/data_loading(%)": time_data_loading_pct,
+                        "memory/max_active(GiB)": gpu_mem_stats.max_active_gib,
+                        "memory/max_active(%)": gpu_mem_stats.max_active_pct,
+                        "memory/max_reserved(GiB)": gpu_mem_stats.max_reserved_gib,
+                        "memory/max_reserved(%)": gpu_mem_stats.max_reserved_pct,
+                        "memory/num_alloc_retries": gpu_mem_stats.num_alloc_retries,
+                        "memory/num_ooms": gpu_mem_stats.num_ooms,
+                    }
+                    metric_logger.log(metrics, step=train_state.step)
+
+                    logger.info(
+                        f"{color.cyan}step: {train_state.step:2}  "
+                        f"{color.green}loss: {global_avg_loss:7.4f}  "
+                        f"{color.yellow}memory: {gpu_mem_stats.max_reserved_gib:5.2f}GiB"
+                        f"({gpu_mem_stats.max_reserved_pct:.2f}%)  "
+                        f"{color.blue}wps: {round(wps):,}  "
+                        f"{color.magenta}mfu: {mfu:.2f}%{color.reset}"
+                    )
+
+                    losses_since_last_log.clear()
+                    ntokens_since_last_log = 0
+                    data_loading_times.clear()
+                    time_last_log = timer()
+                    gpu_memory_monitor.reset_peak_stats()
+
+                checkpoint.save(
+                    train_state.step, force=(train_state.step == job_config.training.steps)
                 )
-                # model FLOPS utilization
-                # For its definition and calculation, please refer to the PaLM paper:
-                # https://arxiv.org/abs/2204.02311
-                mfu = 100 * num_flop_per_token * wps / gpu_peak_flops
 
-                time_end_to_end = time_delta / job_config.metrics.log_freq
-                time_data_loading = np.mean(data_loading_times)
-                time_data_loading_pct = 100 * np.sum(data_loading_times) / time_delta
+                # signals the profiler that the next profiling step has started
+                if torch_profiler:
+                    torch_profiler.step()
 
-                gpu_mem_stats = gpu_memory_monitor.get_peak_stats()
+                if memory_profiler:
+                    memory_profiler.step()
 
-                metrics = {
-                    "loss_metrics/global_avg_loss": global_avg_loss,
-                    "loss_metrics/global_max_loss": global_max_loss,
-                    "wps": wps,
-                    "mfu(%)": mfu,
-                    "time_metrics/end_to_end(s)": time_end_to_end,
-                    "time_metrics/data_loading(s)": time_data_loading,
-                    "time_metrics/data_loading(%)": time_data_loading_pct,
-                    "memory/max_active(GiB)": gpu_mem_stats.max_active_gib,
-                    "memory/max_active(%)": gpu_mem_stats.max_active_pct,
-                    "memory/max_reserved(GiB)": gpu_mem_stats.max_reserved_gib,
-                    "memory/max_reserved(%)": gpu_mem_stats.max_reserved_pct,
-                    "memory/num_alloc_retries": gpu_mem_stats.num_alloc_retries,
-                    "memory/num_ooms": gpu_mem_stats.num_ooms,
-                }
-                metric_logger.log(metrics, step=train_state.step)
-
-                logger.info(
-                    f"{color.cyan}step: {train_state.step:2}  "
-                    f"{color.green}loss: {global_avg_loss:7.4f}  "
-                    f"{color.yellow}memory: {gpu_mem_stats.max_reserved_gib:5.2f}GiB"
-                    f"({gpu_mem_stats.max_reserved_pct:.2f}%)  "
-                    f"{color.blue}wps: {round(wps):,}  "
-                    f"{color.magenta}mfu: {mfu:.2f}%{color.reset}"
-                )
-
-                losses_since_last_log.clear()
-                ntokens_since_last_log = 0
-                data_loading_times.clear()
-                time_last_log = timer()
-                gpu_memory_monitor.reset_peak_stats()
-
-            checkpoint.save(
-                train_state.step, force=(train_state.step == job_config.training.steps)
-            )
-
-            # signals the profiler that the next profiling step has started
-            if torch_profiler:
-                torch_profiler.step()
-
-            if memory_profiler:
-                memory_profiler.step()
-
-            # Reduce timeout after first train step for faster signal (assumes lazy init, compile are finished)
-            if train_state.step == 1:
-                set_pg_timeouts(
-                    timeout=timedelta(seconds=job_config.comm.train_timeout_seconds),
-                    world_mesh=world_mesh,
-                )
+                # Reduce timeout after first train step for faster signal (assumes lazy init, compile are finished)
+                if train_state.step == 1:
+                    set_pg_timeouts(
+                        timeout=timedelta(seconds=job_config.comm.train_timeout_seconds),
+                        world_mesh=world_mesh,
+                    )
 
     if torch.distributed.get_rank() == 0:
         logger.info("Sleeping 2 seconds for other ranks to complete")
