@@ -117,6 +117,14 @@ def build_optimizers(model_parts, job_config: JobConfig, world_mesh=None):
             optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
         elif name == "adam_mini":
             optimizer = Adam_mini(model, lr=lr, 
+            betas = (0.9,0.95), 
+            weight_decay=0.1, 
+            model_sharding=True,
+            n_embd=model_config.dim,
+            n_head=model_config.n_heads,
+            n_query_groups=model_config.n_kv_heads,
+            )
+            '''optimizer = Adam_mini(model, lr=lr, 
             betas=(0.9, 0.95), 
             weight_decay=0.1, 
             model_sharding=True,
@@ -124,6 +132,7 @@ def build_optimizers(model_parts, job_config: JobConfig, world_mesh=None):
             n_head=32,
             n_query_groups=4,
             )
+            '''
             print(f"======>>>>> Using Adam_mini optimizer")
         elif name == "adalomo":
             optimizer = AdaLomo(model, lr=lr)
@@ -229,7 +238,10 @@ def main(job_config: JobConfig):
 
     # build model (using meta init)
     model_cls = model_name_to_cls[model_name]
+    global model_config
     model_config = models_config[model_name][job_config.model.flavor]
+    
+    #model_config = models_config[model_name][job_config.model.flavor]
     # set the model configs from training inputs:
     # 1. norm type to decide which norm layer to use
     # 2. vocab size from tokenizer
