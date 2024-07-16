@@ -383,14 +383,14 @@ class manage_activations(saved_tensors_hooks):
     """Context manager under which activation tensors created in the forward pass will be managed
     """
 
-    def __init__(self, pin_memory: bool = False, device_type: str = "cuda") -> None:
-        device_module = getattr(torch, device_type, torch.cuda)
+    def __init__(self, use_caching: bool = True) -> None:
+        #device_module = getattr(torch, device_type, torch.cuda)
 
-        self.caching: bool = False # are we managing cpu cached memory blocks
+        self.caching: bool = use_caching # are we managing cpu cached memory blocks
         self.min_tensor_size_bytes = 1024 # we don't want to bother with small tensors
         self.tracker = {} # tensor_id = (new_tensor, dtype, if_modified)  ---> track what saved/offloaded/compressed tensors, are where
         self.tensor_id: int = 0
-        self.mem_offload_cache = {} # cache of available memory blocks for tensors
+        self.mem_offload_cache = defaultdict(list) # cache of available memory blocks for tensors
         self.gb = 1024 * 1024 * 1024 # bytes in a gigabyte
         self.ignore_types = [torch.complex64, torch.int64] # high precision and thus not good for quantization
         self.is_first_forward_call = True
@@ -414,8 +414,10 @@ class manage_activations(saved_tensors_hooks):
         
         def get_tensor_size_id( x: torch.Tensor)-> Tuple[int]:
             # get the tensor shape and total bytes as a tuple for cached memory re-use
-            num_bytes = self.get_num_bytes_tensor(x) 
-            return tuple(num_bytes, x.size())
+            num_bytes = get_num_bytes_tensor(x)
+            signature = (num_bytes,)+ x.shape
+            print(f"about to return signature {signature=}")
+            return signature
         
         def get_num_bytes_tensor( x: torch.Tensor) -> int:
             # get the number of bytes in a tensor, for memory management purposes
@@ -494,13 +496,33 @@ class manage_activations(saved_tensors_hooks):
                     self.tracker[tensor_id] = (scaled_tensor, activation.dtype, scale, True)  # True = (in future) modified
                     return tensor_id
             elif self.offload_tensors:
-                cpu_tensor = torch.empty(
-                    sizes,
-                    dtype=activation_dtype,
-                    layout=activation.layout,
-                    pin_memory=True,
-                    device=torch.device("cpu"),
-                )
+                mem_cache_signature = get_tensor_size_id(activation)
+                if self.caching:
+                    if self.is_first_forward_pass:
+                        # we need to create all new tensors first pass, and then re-use future passes
+                        cpu_tensor = torch.empty(
+                            sizes,
+                            dtype=activation_dtype,
+                            layout=activation.layout,
+                            pin_memory=True,
+                            device=torch.device("cpu"),
+                        )
+                        self.mem_offload_cache[mem_cache_signature].append(cpu_tensor)
+                        print(f"created {mem_cache_signature=}, {len(self.mem_offload_cache[mem_cache_signature])=}")
+
+                    else: 
+                        # we can re-use the cached tensors
+                        cpu_tensor = self.mem_offload_cache[mem_cache_signature].pop()
+                        assert cpu_tensor.size() == activation.size(), f"mismatch in popped cache tensor"
+                else:  # no caching, we just create a new tensor and copy the data
+                    cpu_tensor = torch.empty(
+                        sizes,
+                        dtype=activation_dtype,
+                        layout=activation.layout,
+                        pin_memory=True,
+                        device=torch.device("cpu"),
+                    )
+                    
                 cpu_tensor.copy_(activation)
                 self.tracker[tensor_id] = (cpu_tensor, activation_dtype, 0.0, True)  # True = (in future) modified
                 return tensor_id
@@ -538,6 +560,11 @@ class manage_activations(saved_tensors_hooks):
                     gpu_tensor = unscale_half_tensor(maybe_gpu_tensor, scale)
                 else:
                     gpu_tensor = maybe_gpu_tensor.to(device="cuda", non_blocking=False)
+                    if self.caching:
+                        # TODO - just keep the signature rather than recomputing it
+                        # re-add memory to cache since this is now free...
+                        mem_cache_signature = get_tensor_size_id(maybe_gpu_tensor)
+                        self.mem_offload_cache[mem_cache_signature].append(maybe_gpu_tensor)
                 del self.tracker[unpack_tensor_id]
                 return gpu_tensor
                 #print(f"Unpacking {unpack_tensor_id}, {gpu_tensor.size()}, {gpu_tensor.dtype=}, {modified=}")
