@@ -393,8 +393,10 @@ class manage_activations(saved_tensors_hooks):
         self.mem_offload_cache = {} # cache of available memory blocks for tensors
         self.gb = 1024 * 1024 * 1024 # bytes in a gigabyte
         self.ignore_types = [torch.complex64, torch.int64] # high precision and thus not good for quantization
-        self.is_first_forward = True
-        self.is_first_backward = True
+        self.is_first_forward_call = True
+        self.is_first_backward_call = True
+        self.is_first_forward_pass = True
+
         # metrics
         self.timing: bool = True
         self.forward_start_time = 0
@@ -454,7 +456,7 @@ class manage_activations(saved_tensors_hooks):
         # -------- core pack / unpack work --------
         def pack_tensor(activation: torch.Tensor) -> str:
             # activations are passed in during forward pass - from here we take over and return a unique id
-            if self.is_first_forward:
+            if self.is_first_forward_call:
                 if self.timing:
                     if self.backward_start_time:
                         end_backward_time = time.perf_counter()
@@ -465,9 +467,9 @@ class manage_activations(saved_tensors_hooks):
                 #if not self.caching:
                 self.tracker.clear()
                 
-                print(f"***** first forward")
-                self.is_first_forward = False
-                self.is_first_backward = True
+                print(f"***** first forward call")
+                self.is_first_forward_call = False
+                self.is_first_backward_call = True
             
             # query for basic tensor info
             activation_dtype = activation.dtype
@@ -513,14 +515,15 @@ class manage_activations(saved_tensors_hooks):
             # backward pass - we are called with the tensor_id.  
             # We then use the tensor_id to retrieve the saved/offloaded/compressed tensor
             # and return it in original state (or near original for quantized)
-            if self.is_first_backward:
+            if self.is_first_backward_call:
+                self.is_first_forward_pass = False
                 if self.rescale_fp32:
                     print(f"*********** Total fp32 vals: {(self.fp32_vals/self.gb)=},  {self.fp32_count=}")
                 self.fp32_vals = 0
                 self.fp32_count = 0
 
-                self.is_first_backward = False
-                self.is_first_forward = True
+                self.is_first_backward_call = False
+                self.is_first_forward_call = True
                 if self.timing:
                     end_forward_time = time.perf_counter()
                     print(f"***** forward took {(end_forward_time - self.forward_start_time):.3f} seconds")
