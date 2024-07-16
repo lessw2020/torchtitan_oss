@@ -383,7 +383,7 @@ class manage_activations(saved_tensors_hooks):
     """Context manager under which activation tensors created in the forward pass will be managed
     """
 
-    def __init__(self, use_caching: bool = True) -> None:
+    def __init__(self, use_caching: bool = False) -> None:
         #device_module = getattr(torch, device_type, torch.cuda)
 
         self.caching: bool = use_caching # are we managing cpu cached memory blocks
@@ -396,6 +396,9 @@ class manage_activations(saved_tensors_hooks):
         self.is_first_forward_call = True
         self.is_first_backward_call = True
         self.is_first_forward_pass = True
+
+        # optional
+        self.use_pin_memory: bool = True   # careful with this...we do not yet monitor system memory
 
         # metrics
         self.timing: bool = True
@@ -415,9 +418,7 @@ class manage_activations(saved_tensors_hooks):
         def get_tensor_size_id( x: torch.Tensor)-> Tuple[int]:
             # get the tensor shape and total bytes as a tuple for cached memory re-use
             num_bytes = get_num_bytes_tensor(x)
-            signature = (num_bytes,)+ x.shape
-            print(f"about to return signature {signature=}")
-            return signature
+            return (num_bytes,)+ x.shape
         
         def get_num_bytes_tensor( x: torch.Tensor) -> int:
             # get the number of bytes in a tensor, for memory management purposes
@@ -504,11 +505,11 @@ class manage_activations(saved_tensors_hooks):
                             sizes,
                             dtype=activation_dtype,
                             layout=activation.layout,
-                            pin_memory=True,
+                            pin_memory=self.use_pin_memory,
                             device=torch.device("cpu"),
                         )
                         self.mem_offload_cache[mem_cache_signature].append(cpu_tensor)
-                        print(f"created {mem_cache_signature=}, {len(self.mem_offload_cache[mem_cache_signature])=}")
+                        # print(f"created {mem_cache_signature=}, {len(self.mem_offload_cache[mem_cache_signature])=}")
 
                     else: 
                         # we can re-use the cached tensors
@@ -519,11 +520,11 @@ class manage_activations(saved_tensors_hooks):
                         sizes,
                         dtype=activation_dtype,
                         layout=activation.layout,
-                        pin_memory=True,
+                        pin_memory=self.use_pin_memory,
                         device=torch.device("cpu"),
                     )
                     
-                cpu_tensor.copy_(activation)
+                cpu_tensor.copy_(activation, non_blocking=True)
                 self.tracker[tensor_id] = (cpu_tensor, activation_dtype, 0.0, True)  # True = (in future) modified
                 return tensor_id
 
