@@ -398,6 +398,8 @@ class manage_activations(saved_tensors_hooks):
         self.timing: bool = True
         self.forward_start_time = 0
         self.backward_start_time = 0
+        self.fp32_vals = 0
+        self.fp32_count = 0
 
         # platform util functions
         def get_tensor_id()-> str:
@@ -417,9 +419,9 @@ class manage_activations(saved_tensors_hooks):
             # this might be too slow but is a way to provide a full byte signature for a tensor
             # and used to match available memory sizes for caching 
             # alternative = (total_bytes, tensor.shape) which does not account for strides
-            element_size = x.element_size()
-            shape = x.shape
-            stride = x.stride()
+            element_size = tensor.element_size()
+            shape = tensor.shape
+            stride = tensor.stride()
             
             bytes_per_dim = []
             for dim, (size, stride_val) in enumerate(zip(shape, stride)):
@@ -427,6 +429,23 @@ class manage_activations(saved_tensors_hooks):
                 bytes_per_dim.append(bytes_in_dim)
     
             return tuple(bytes_per_dim)
+        
+        def scale_and_convert_to_half(tensor):
+            # Find the maximum absolute value
+            max_abs = torch.max(torch.abs(tensor))
+            
+            # Calculate scale factor
+            scale = max_abs / 65504.0  # 65504 is roughly the max value in float16
+            
+            # Scale down, convert to half, and store scale factor
+            scaled_tensor = (tensor / scale).half()
+            return scaled_tensor, scale
+        
+        def unscale_half_tensor(scaled_half_tensor, scale):
+            # restore scaled tensor to original
+            scaled_tensor = scaled_half_tensor.float() * scale
+            return scaled_tensor
+
         
         # -------- core pack / unpack work --------
         def pack_tensor(activation: torch.Tensor) -> str:
@@ -442,7 +461,7 @@ class manage_activations(saved_tensors_hooks):
                 #if not self.caching:
                 self.tracker.clear()
                 
-                print("***** first forward")
+                print(f"***** first forward")
                 self.is_first_forward = False
                 self.is_first_backward = True
             
@@ -451,26 +470,36 @@ class manage_activations(saved_tensors_hooks):
             num_bytes = get_num_bytes_tensor(activation)
             sizes = activation.size()
             tensor_id = get_tensor_id()
+            scale = 0.0
 
             # skipping complex types, small tensors, and tensors with unsupported dtypes
             if num_bytes < self.min_tensor_size_bytes or (activation_dtype in self.ignore_types):
-                print(f"skipping activation of {num_bytes}, size= {sizes}, {activation_dtype=}")
+                #print(f"skipping activation of {num_bytes}, size= {sizes}, {activation_dtype=}")
                 
                 gpu_clone = activation.clone().detach()
-                self.tracker[tensor_id] = (gpu_clone, activation.dtype, False)  # False = not modified
+                self.tracker[tensor_id] = (gpu_clone, activation.dtype, 0.0, False)  # False = not modified
                 return tensor_id
+            elif activation_dtype==torch.float32:
+                    self.fp32_vals += num_bytes
+                    self.fp32_count +=1
+                    scaled_tensor, scale = scale_and_convert_to_half(activation)
+                    self.tracker[tensor_id] = (scaled_tensor, activation.dtype, scale, True)  # True = (in future) modified
+                    return tensor_id
             else:
-                # main activation management code
-                print(f"Storing activation {sizes}, {num_bytes=}, {activation.dtype=} as {tensor_id}")
                 gpu_clone = activation.clone().detach()
-                self.tracker[tensor_id] = (gpu_clone, activation_dtype, True)  # True = (in future) modified
+                self.tracker[tensor_id] = (gpu_clone, activation_dtype, 0.0, False)  # True = (in future) modified
                 return tensor_id
-     
+
+
         def unpack_tensor(unpack_tensor_id: str) -> torch.Tensor:
             # backward pass - we are called with the tensor_id.  
             # We then use the tensor_id to retrieve the saved/offloaded/compressed tensor
             # and return it in original state (or near original for quantized)
             if self.is_first_backward:
+                print(f"*********** Total fp32 vals: {(self.fp32_vals/self.gb)=},  {self.fp32_count=}")
+                self.fp32_vals = 0
+                self.fp32_count = 0
+
                 self.is_first_backward = False
                 self.is_first_forward = True
                 if self.timing:
@@ -481,8 +510,10 @@ class manage_activations(saved_tensors_hooks):
             
             # retrieve the saved/offloaded/compressed tensor
             assert unpack_tensor_id in self.tracker, f"untracked tensor, {unpack_tensor_id}"
-            gpu_tensor, dtype, modified = self.tracker[unpack_tensor_id]
-            print(f"Unpacking {unpack_tensor_id}, {gpu_tensor.size()}, {gpu_tensor.dtype=}, {modified=}")
+            gpu_tensor, dtype, scale, modified = self.tracker[unpack_tensor_id]
+            if modified:
+                gpu_tensor = unscale_half_tensor(gpu_tensor, scale)
+                print(f"Unpacking {unpack_tensor_id}, {gpu_tensor.size()}, {gpu_tensor.dtype=}, {modified=}")
             # clear tensor from tracking
             del self.tracker[unpack_tensor_id]
             return gpu_tensor
