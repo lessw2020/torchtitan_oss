@@ -400,6 +400,8 @@ class manage_activations(saved_tensors_hooks):
         self.backward_start_time = 0
         self.fp32_vals = 0
         self.fp32_count = 0
+        self.rescale_fp32 = False
+        self.offload_tensors = True
 
         # platform util functions
         def get_tensor_id()-> str:
@@ -479,12 +481,26 @@ class manage_activations(saved_tensors_hooks):
                 gpu_clone = activation.clone().detach()
                 self.tracker[tensor_id] = (gpu_clone, activation.dtype, 0.0, False)  # False = not modified
                 return tensor_id
-            elif activation_dtype==torch.float32:
+
+            elif self.rescale_fp32 and activation_dtype==torch.float32:
+                    gpu_clone = activation.clone().detach()
                     self.fp32_vals += num_bytes
                     self.fp32_count +=1
-                    scaled_tensor, scale = scale_and_convert_to_half(activation)
+                    scaled_tensor, scale = scale_and_convert_to_half(gpu_clone)
                     self.tracker[tensor_id] = (scaled_tensor, activation.dtype, scale, True)  # True = (in future) modified
                     return tensor_id
+            elif self.offload_tensors:
+                cpu_tensor = torch.empty(
+                    sizes,
+                    dtype=activation_dtype,
+                    layout=activation.layout,
+                    pin_memory=True,
+                    device=torch.device("cpu"),
+                )
+                cpu_tensor.copy_(activation)
+                self.tracker[tensor_id] = (cpu_tensor, activation_dtype, 0.0, True)  # True = (in future) modified
+                return tensor_id
+
             else:
                 gpu_clone = activation.clone().detach()
                 self.tracker[tensor_id] = (gpu_clone, activation_dtype, 0.0, False)  # True = (in future) modified
@@ -496,7 +512,8 @@ class manage_activations(saved_tensors_hooks):
             # We then use the tensor_id to retrieve the saved/offloaded/compressed tensor
             # and return it in original state (or near original for quantized)
             if self.is_first_backward:
-                print(f"*********** Total fp32 vals: {(self.fp32_vals/self.gb)=},  {self.fp32_count=}")
+                if self.rescale_fp32:
+                    print(f"*********** Total fp32 vals: {(self.fp32_vals/self.gb)=},  {self.fp32_count=}")
                 self.fp32_vals = 0
                 self.fp32_count = 0
 
@@ -510,13 +527,18 @@ class manage_activations(saved_tensors_hooks):
             
             # retrieve the saved/offloaded/compressed tensor
             assert unpack_tensor_id in self.tracker, f"untracked tensor, {unpack_tensor_id}"
-            gpu_tensor, dtype, scale, modified = self.tracker[unpack_tensor_id]
+            maybe_gpu_tensor, dtype, scale, modified = self.tracker[unpack_tensor_id]
             if modified:
-                gpu_tensor = unscale_half_tensor(gpu_tensor, scale)
-                print(f"Unpacking {unpack_tensor_id}, {gpu_tensor.size()}, {gpu_tensor.dtype=}, {modified=}")
+                if self.rescale_fp32:
+                    gpu_tensor = unscale_half_tensor(maybe_gpu_tensor, scale)
+                else:
+                    gpu_tensor = maybe_gpu_tensor.to(device="cuda", non_blocking=False)
+                del self.tracker[unpack_tensor_id]
+                return gpu_tensor
+                #print(f"Unpacking {unpack_tensor_id}, {gpu_tensor.size()}, {gpu_tensor.dtype=}, {modified=}")
             # clear tensor from tracking
             del self.tracker[unpack_tensor_id]
-            return gpu_tensor
+            return maybe_gpu_tensor
 
         super().__init__(pack_tensor, unpack_tensor)
 
