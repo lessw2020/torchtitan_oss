@@ -435,7 +435,7 @@ class manage_activations(saved_tensors_hooks):
                 if self.timing:
                     if self.backward_start_time:
                         end_backward_time = time.perf_counter()
-                        print(f"***** backward pass took {(end_backward_time - backward_start_time):.3f} seconds")
+                        print(f"***** backward pass took {(end_backward_time - self.backward_start_time):.3f} seconds")
                     self.forward_start_time = time.perf_counter()
                 
                 print(f"total managed activations  {len(self.tracker)=}")
@@ -454,16 +454,16 @@ class manage_activations(saved_tensors_hooks):
 
             # skipping complex types, small tensors, and tensors with unsupported dtypes
             if num_bytes < self.min_tensor_size_bytes or (activation_dtype in self.ignore_types):
-                print(f"skipping activation {input_tensor.shape=}, {input_tensor.dtype=}")
+                print(f"skipping activation of {num_bytes}, size= {sizes}, {activation_dtype=}")
                 
                 gpu_clone = activation.clone().detach()
                 self.tracker[tensor_id] = (gpu_clone, activation.dtype, False)  # False = not modified
                 return tensor_id
             else:
                 # main activation management code
-                print(f"Storing activation {sizes}, {activation.dtype=} as {tensor_id}")
+                print(f"Storing activation {sizes}, {num_bytes=}, {activation.dtype=} as {tensor_id}")
                 gpu_clone = activation.clone().detach()
-                self.tracker[tensor_id] = (gpu_clone, activation.dtype, True)  # True = (in future) modified
+                self.tracker[tensor_id] = (gpu_clone, activation_dtype, True)  # True = (in future) modified
                 return tensor_id
      
         def unpack_tensor(unpack_tensor_id: str) -> torch.Tensor:
@@ -482,6 +482,7 @@ class manage_activations(saved_tensors_hooks):
             # retrieve the saved/offloaded/compressed tensor
             assert unpack_tensor_id in self.tracker, f"untracked tensor, {unpack_tensor_id}"
             gpu_tensor, dtype, modified = self.tracker[unpack_tensor_id]
+            print(f"Unpacking {unpack_tensor_id}, {gpu_tensor.size()}, {gpu_tensor.dtype=}, {modified=}")
             # clear tensor from tracking
             del self.tracker[unpack_tensor_id]
             return gpu_tensor
