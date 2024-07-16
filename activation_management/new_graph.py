@@ -417,9 +417,9 @@ class manage_activations(saved_tensors_hooks):
             # this might be too slow but is a way to provide a full byte signature for a tensor
             # and used to match available memory sizes for caching 
             # alternative = (total_bytes, tensor.shape) which does not account for strides
-            element_size = tensor.element_size()
-            shape = tensor.shape
-            stride = tensor.stride()
+            element_size = x.element_size()
+            shape = x.shape
+            stride = x.stride()
             
             bytes_per_dim = []
             for dim, (size, stride_val) in enumerate(zip(shape, stride)):
@@ -442,7 +442,7 @@ class manage_activations(saved_tensors_hooks):
                 #if not self.caching:
                 self.tracker.clear()
                 
-                print(f"***** first forward")
+                print("***** first forward")
                 self.is_first_forward = False
                 self.is_first_backward = True
             
