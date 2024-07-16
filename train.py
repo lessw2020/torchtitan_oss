@@ -338,8 +338,8 @@ def main(job_config: JobConfig):
 
     # train loop
     logger.info(f"Training starts at step {train_state.step + 1}")
-    with torch.autograd.graph.manage_activations():
-    #with contextlib.nullcontext():
+    #with torch.autograd.graph.manage_activations():
+    with contextlib.nullcontext():
         with maybe_enable_profiling(
             job_config, global_step=train_state.step
         ) as torch_profiler, maybe_enable_memory_snapshot(
