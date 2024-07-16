@@ -389,6 +389,7 @@ class manage_activations(saved_tensors_hooks):
         self.caching: bool = False # are we managing cpu cached memory blocks
         self.min_tensor_size_bytes = 1024 # we don't want to bother with small tensors
         self.tracker = {} # tensor_id = (new_tensor, dtype, if_modified)  ---> track what saved/offloaded/compressed tensors, are where
+        self.tensor_id: int = 0
         self.mem_offload_cache = {} # cache of available memory blocks for tensors
         self.gb = 1024 * 1024 * 1024 # bytes in a gigabyte
         self.ignore_types = [torch.complex64, torch.int64] # high precision and thus not good for quantization
@@ -404,9 +405,10 @@ class manage_activations(saved_tensors_hooks):
         self.offload_tensors = True
 
         # platform util functions
-        def get_tensor_id()-> str:
+        def get_tensor_id()-> int:
             # create a unique id for each tensor we are managing
-            return secrets.token_urlsafe(nbytes=8)
+            self.tensor_id+=1
+            return self.tensor_id
         
         def get_tensor_size_id( x: torch.Tensor)-> Tuple[int]:
             # get the tensor shape and total bytes as a tuple for cached memory re-use
