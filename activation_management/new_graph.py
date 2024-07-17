@@ -501,10 +501,10 @@ class manage_activations(saved_tensors_hooks):
                 return tensor_id
 
             elif self.rescale_fp32 and activation_dtype==torch.float32:
-                gpu_clone = activation.clone().detach()
+                #gpu_clone = activation.clone().detach()
                 self.fp32_vals += num_bytes
                 self.fp32_count +=1
-                scaled_tensor, scale = scale_and_convert_to_half(gpu_clone)
+                scaled_tensor, scale = scale_and_convert_to_half(activation)
                 if self.offload_tensors:
                     cpu_tensor = torch.empty(
                     sizes,
