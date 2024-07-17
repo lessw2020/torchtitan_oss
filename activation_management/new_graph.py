@@ -368,6 +368,7 @@ class save_on_cpu(saved_tensors_hooks):
 # ------------------ platform start -----------------
 import time
 import secrets
+import psutil
 
 def perf_timer(func):
     def wrapper(*args, **kwargs):
@@ -383,7 +384,7 @@ class manage_activations(saved_tensors_hooks):
     """Context manager under which activation tensors created in the forward pass will be managed
     """
 
-    def __init__(self, use_caching: bool = False) -> None:
+    def __init__(self, use_caching: bool = False, rescale_fp32: bool = False, offloading: bool = True) -> None:
         #device_module = getattr(torch, device_type, torch.cuda)
 
         self.caching: bool = use_caching # are we managing cpu cached memory blocks
@@ -399,6 +400,7 @@ class manage_activations(saved_tensors_hooks):
 
         # optional
         self.use_pin_memory: bool = True   # careful with this...we do not yet monitor system memory
+        self.virtual_memory_safe_pct = 0.60  # we should not exceed this percentage of memory
 
         # metrics
         self.timing: bool = True
@@ -406,10 +408,20 @@ class manage_activations(saved_tensors_hooks):
         self.backward_start_time = 0
         self.fp32_vals = 0
         self.fp32_count = 0
-        self.rescale_fp32 = False
-        self.offload_tensors = True
+        self.rescale_fp32 = rescale_fp32
+        self.offload_tensors = offloading
 
         # platform util functions
+        def verify_sufficient_virtual_memory():
+            curr_pct = get_cpu_ram_pct()
+            if curr_pct > self.virtual_memory_safe_pct:
+                print(f"***** WARNING: {curr_pct=}% > {self.virtual_memory_safe_pct=}% of virtual memory used")
+                
+        
+        def get_cpu_ram_pct()-> float:
+            # get the percentage of memory used by the system
+            return psutil.virtual_memory().percent
+                
         def get_tensor_id()-> int:
             # create a unique id for each tensor we are managing
             self.tensor_id+=1
@@ -460,17 +472,16 @@ class manage_activations(saved_tensors_hooks):
         def pack_tensor(activation: torch.Tensor) -> str:
             # activations are passed in during forward pass - from here we take over and return a unique id
             if self.is_first_forward_call:
+
                 if self.timing:
                     if self.backward_start_time:
                         end_backward_time = time.perf_counter()
                         print(f"***** backward pass took {(end_backward_time - self.backward_start_time):.3f} seconds")
                     self.forward_start_time = time.perf_counter()
                 
-                print(f"total managed activations  {len(self.tracker)=}")
-                #if not self.caching:
-                self.tracker.clear()
+                assert len(self.tracker) == 0, "backward pass should have cleared tracker of all tensors"
                 
-                print(f"***** first forward call")
+                # set training phase trackers
                 self.is_first_forward_call = False
                 self.is_first_backward_call = True
             
@@ -490,15 +501,29 @@ class manage_activations(saved_tensors_hooks):
                 return tensor_id
 
             elif self.rescale_fp32 and activation_dtype==torch.float32:
-                    gpu_clone = activation.clone().detach()
-                    self.fp32_vals += num_bytes
-                    self.fp32_count +=1
-                    scaled_tensor, scale = scale_and_convert_to_half(gpu_clone)
-                    self.tracker[tensor_id] = (scaled_tensor, activation.dtype, scale, True)  # True = (in future) modified
-                    return tensor_id
+                gpu_clone = activation.clone().detach()
+                self.fp32_vals += num_bytes
+                self.fp32_count +=1
+                scaled_tensor, scale = scale_and_convert_to_half(gpu_clone)
+                if self.offload_tensors:
+                    cpu_tensor = torch.empty(
+                    sizes,
+                    dtype=activation_dtype,
+                    layout=activation.layout,
+                    pin_memory=self.use_pin_memory,
+                    device=torch.device("cpu"),
+                )
+                
+                    cpu_tensor.copy_(scaled_tensor, non_blocking=True)
+                    self.tracker[tensor_id] = (cpu_tensor, activation_dtype, scale, True)  # True = (in future) modified
+                else:
+                    self.tracker[tensor_id] = (scaled_tensor, activation_dtype, scale, True)  # True = (in future) modified
+                
+                return tensor_id
+
             elif self.offload_tensors:
-                mem_cache_signature = get_tensor_size_id(activation)
                 if self.caching:
+                    mem_cache_signature = get_tensor_size_id(activation)
                     if self.is_first_forward_pass:
                         # we need to create all new tensors first pass, and then re-use future passes
                         cpu_tensor = torch.empty(
@@ -539,7 +564,11 @@ class manage_activations(saved_tensors_hooks):
             # We then use the tensor_id to retrieve the saved/offloaded/compressed tensor
             # and return it in original state (or near original for quantized)
             if self.is_first_backward_call:
-                self.is_first_forward_pass = False
+                if self.is_first_forward_pass:
+                    self.is_first_forward_pass = False
+                    if self.use_pin_memory:
+                        verify_sufficient_virtual_memory()
+
                 if self.rescale_fp32:
                     print(f"*********** Total fp32 vals: {(self.fp32_vals/self.gb)=},  {self.fp32_count=}")
                 self.fp32_vals = 0
@@ -557,18 +586,19 @@ class manage_activations(saved_tensors_hooks):
             assert unpack_tensor_id in self.tracker, f"untracked tensor, {unpack_tensor_id}"
             maybe_gpu_tensor, dtype, scale, modified = self.tracker[unpack_tensor_id]
             if modified:
-                if self.rescale_fp32:
-                    gpu_tensor = unscale_half_tensor(maybe_gpu_tensor, scale)
-                else:
+                
+                if self.rescale_fp32 and scale:
                     gpu_tensor = maybe_gpu_tensor.to(device="cuda", non_blocking=False)
-                    if self.caching:
-                        # TODO - just keep the signature rather than recomputing it
-                        # re-add memory to cache since this is now free...
-                        mem_cache_signature = get_tensor_size_id(maybe_gpu_tensor)
-                        self.mem_offload_cache[mem_cache_signature].append(maybe_gpu_tensor)
+                    gpu_tensor = unscale_half_tensor(gpu_tensor, scale)
+                else:
+                    gpu_tensor = maybe_gpu_tensor.to(device="cuda", non_blocking=True)
+                if self.caching:
+                    # TODO - just keep the signature rather than recomputing it
+                    # re-add memory to cache since this is now free...
+                    mem_cache_signature = get_tensor_size_id(maybe_gpu_tensor)
+                    self.mem_offload_cache[mem_cache_signature].append(maybe_gpu_tensor)
                 del self.tracker[unpack_tensor_id]
                 return gpu_tensor
-                #print(f"Unpacking {unpack_tensor_id}, {gpu_tensor.size()}, {gpu_tensor.dtype=}, {modified=}")
             # clear tensor from tracking
             del self.tracker[unpack_tensor_id]
             return maybe_gpu_tensor
