@@ -7,6 +7,7 @@
 import argparse
 import logging
 import os
+import shutil
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
@@ -46,6 +47,24 @@ def build_test_list():
     """
     integration_tests_flavors = defaultdict(list)
     integration_tests_flavors["debug_model.toml"] = [
+        OverrideDefinitions(
+            [
+                [
+                    "--checkpoint.enable_checkpoint",
+                    "--experimental.pipeline_parallel_degree 4",
+                    "--experimental.pipeline_parallel_split_points layers.1,layers.2,layers.3,layers.4,layers.5,layers.6,layers.7",
+                    "--experimental.pipeline_parallel_schedule zb",
+                    "--experimental.pipeline_parallel_microbatches 8",
+                    "--training.data_parallel_degree 1",
+                    "--model.norm_type rmsnorm",  # fused_rmsnorm crashes with PP
+                ],
+            ],
+            "PP fake ZB test",
+            "pp_zb",
+            requires_seed_checkpoint=True,
+            ngpu=4,
+        ),
+    #integration_tests_flavors["debug_model.toml"] = [
         OverrideDefinitions(
             [
                 [
@@ -399,9 +418,29 @@ def run_tests(args):
                                 run_test(test_flavor, full_path, args.output_dir)
 
 
+def ensure_empty_directory(directory_path):
+    """
+    Check if a directory exists, remove it if it does, and create a new empty directory.
+    
+    :param directory_path: Path to the directory
+    """
+    try:
+        # Check if the directory exists
+        if os.path.exists(directory_path):
+            # Remove the directory and all its contents
+            shutil.rmtree(directory_path)
+            logger.info(f"Removed existing directory: {directory_path}")
+        
+        # Create a new empty directory
+        os.makedirs(directory_path)
+        logger.info(f"Created new empty directory: {directory_path}")
+    
+    except Exception as e:
+        logger.info(f"An error occurred: {e}")
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("output_dir")
+    parser.add_argument("--output_dir", default = "./output/testing")
     parser.add_argument("--config_dir", default="./train_configs")
     parser.add_argument(
         "--test",
@@ -411,10 +450,16 @@ def main():
     parser.add_argument("--ngpu", default=4, type=int)
     args = parser.parse_args()
 
-    if not os.path.exists(args.output_dir):
+    '''if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     if os.listdir(args.output_dir):
         raise RuntimeError("Please provide an empty output directory.")
+    '''
+    ensure_empty_directory(args.output_dir)
+    logger.info(f"Output directory: {args.output_dir}")
+    logger.info(f"Config directory: {args.config_dir}")
+    logger.info(f"Test: {args.test}")
+    logger.info(f"Number of GPUs: {args.ngpu}")
     run_tests(args)
 
 

@@ -412,13 +412,20 @@ def apply_tp(
             parallelize_plan=layer_plan,
         )
 
+    # updates expressly for async tensor parallel
     if job_config.experimental.enable_async_tensor_parallel:
         from torch.distributed._symmetric_memory import enable_symm_mem_for_group
+        torch._dynamo.config.cache_size_limit = 10000
+        logger.info("Updating torch._dynamo.config.cache_size_limit to 10000 to support Async TP")
 
         torch._inductor.config._micro_pipeline_tp = True
         enable_symm_mem_for_group(tp_mesh.get_group().group_name)
 
-    logger.info("Applied Tensor Parallelism to the model")
+        if not job_config.training.compile:
+            logger.warning(f"Async TP requires compilation...auto enabling compile = True for this job to resolve.")
+            job_config.training.compile = True
+
+    logger.info(f"Applied{' Async ' if job_config.experimental.enable_async_tensor_parallel else ' '}Tensor Parallelism to the model")
     return model
 
 
@@ -442,12 +449,14 @@ def apply_compile(model: nn.Module, job_config: JobConfig):
         raise NotImplementedError(
             "fused_rmsnorm is not compatible with torch.compile yet. Please use rmsnorm or layernorm."
         )
+    
 
     for layer_id, transformer_block in model.layers.named_children():
         # TODO: dynamic shape have some issues so we turn it off for now.
         # TODO: inline inbuilt nn modules does not work yet, enable it to accelarate
         # compile time.
         # torch._dynamo.config.inline_inbuilt_nn_modules = True
+           
         transformer_block = torch.compile(transformer_block, dynamic=False)
         model.layers.register_module(layer_id, transformer_block)
 

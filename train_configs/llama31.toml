@@ -1,0 +1,57 @@
+# torchtitan Config.toml
+# NOTE: this toml config is a preset for 64 A100 GPUs.
+
+[job]
+dump_folder = "./outputs"
+description = "Llama 31 40B training"
+
+[profiling]
+enable_profiling = false
+save_traces_folder = "profile_trace"
+profile_freq = 100
+
+[metrics]
+log_freq = 1
+enable_tensorboard = false
+save_tb_folder = "tb"
+enable_color_printing = false
+
+[model]
+name = "llama3"
+flavor = "40B"
+norm_type = "compiled_rmsnorm"  # layernorm / np_layernorm / rmsnorm / compiled_rmsnorm / fused_rmsnorm
+tokenizer_path = "./torchtitan/datasets/tokenizer/original/tokenizer.model"
+
+[optimizer]
+name = "AdamW"
+lr = 1.5e-4
+
+[training]
+batch_size = 2
+seq_len = 1024
+warmup_steps = 60  # lr scheduler warm up, normally 20% of the train steps
+max_norm = 1.0  # grad norm clipping
+steps = 100
+data_parallel_degree = -1
+tensor_parallel_degree = 1  # 8-way TP
+enable_float8_linear = false
+compile = true
+dataset = "c4"
+
+[experimental]
+pipeline_parallel_degree = 1
+enable_async_tensor_parallel = false
+pipeline_parallel_split_points= "layers.1,layers.2,layers.3,layers.4,layers.5,layers.6,layers.7" # layers.2, layers.4, layers.6" # "
+pipeline_parallel_schedule= "1f1b"
+
+[checkpoint]
+enable_checkpoint = false
+folder = "checkpoint"
+interval_type = "steps"
+interval = 500
+model_weights_only = false
+export_dtype = "float32"
+async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]
+
+[activation_checkpoint]
+mode = 'full'
